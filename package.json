@@ -1,5 +1,5 @@
 {
-  "name": "@anthropic/devlog",
+  "name": "@moose-lab/devlog",
   "version": "0.1.0",
   "description": "Auto-generate dev logs from your Claude Code sessions",
   "type": "module",
