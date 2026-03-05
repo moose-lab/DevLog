@@ -9,10 +9,50 @@ import type {
   ToolResultBlock,
   SessionMeta,
 } from "./types.js";
+import { computeCost } from "./pricing.js";
+
+// Types to skip entirely
+const SKIP_TYPES = new Set([
+  "progress",
+  "file-history-snapshot",
+  "queue-operation",
+]);
+
+/**
+ * Resolve the effective role from the event.
+ * Real Claude Code uses type:"user"/"assistant", legacy uses type:"human"/"assistant".
+ */
+function resolveRole(event: RawJsonlEvent): "human" | "assistant" | null {
+  const t = event.type;
+  if (t === "human" || t === "user") return "human";
+  if (t === "assistant") return "assistant";
+  return null;
+}
+
+/**
+ * Get content blocks from the event, supporting both real and legacy formats.
+ * Real: event.message.content
+ * Legacy: event.content
+ */
+function getContent(event: RawJsonlEvent): ContentBlock[] | string | undefined {
+  if (event.message && typeof event.message === "object" && event.message.content != null) {
+    return event.message.content;
+  }
+  return event.content;
+}
+
+/**
+ * Get model from the event, supporting both formats.
+ */
+function getModel(event: RawJsonlEvent): string | undefined {
+  if (event.message && typeof event.message === "object" && event.message.model) {
+    return event.message.model;
+  }
+  return event.model;
+}
 
 /**
  * Rich scan: extract full metadata from a session file in a single streaming pass.
- * This replaces the old quickScanSession — same performance, 10x more insight.
  */
 export async function scanSession(filePath: string): Promise<SessionMeta> {
   const meta: SessionMeta = {
@@ -29,6 +69,7 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
     lastActivity: new Date(0),
     firstActivity: new Date(),
     errorCount: 0,
+    costByModel: {},
   };
 
   const toolSet = new Set<string>();
@@ -45,6 +86,9 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
 
     try {
       const event = JSON.parse(line) as RawJsonlEvent;
+
+      if (SKIP_TYPES.has(event.type)) continue;
+
       const ts = event.timestamp ? new Date(event.timestamp) : null;
 
       if (ts) {
@@ -52,37 +96,57 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
         if (ts > meta.lastActivity) meta.lastActivity = ts;
       }
 
+      const role = resolveRole(event);
+
       // Count messages
-      if (event.type === "human") {
+      if (role === "human") {
         meta.humanTurns++;
         meta.messageCount++;
       }
-      if (event.type === "assistant") {
+      if (role === "assistant") {
         meta.assistantTurns++;
         meta.messageCount++;
       }
 
       // First user message
-      if (event.type === "human" && !meta.firstUserMessage) {
+      if (role === "human" && !meta.firstUserMessage) {
         meta.firstUserMessage = extractTextContent(event);
       }
 
-      // Cost & duration tracking
-      if (event.costUSD && typeof event.costUSD === "number") {
+      // Cost: compute from usage tokens (costUSD is null in real data)
+      const model = getModel(event);
+      const usage = event.message && typeof event.message === "object" ? event.message.usage : undefined;
+      if (model && usage) {
+        const cost = computeCost(model, usage);
+        meta.totalCostUSD += cost;
+        meta.costByModel[model] = (meta.costByModel[model] || 0) + cost;
+      } else if (event.costUSD && typeof event.costUSD === "number") {
+        // Legacy fallback
         meta.totalCostUSD += event.costUSD;
+        const m = model || "unknown";
+        meta.costByModel[m] = (meta.costByModel[m] || 0) + event.costUSD;
+      }
+
+      // Duration from system turn_duration events
+      if (event.type === "system" && event.subtype === "turn_duration") {
+        const dur = (event as Record<string, unknown>).durationMs;
+        if (typeof dur === "number") {
+          meta.totalDurationMs += dur;
+        }
       }
       if (event.durationMs && typeof event.durationMs === "number") {
         meta.totalDurationMs += event.durationMs;
       }
 
       // Model tracking
-      if (event.model && typeof event.model === "string") {
-        modelSet.add(event.model);
+      if (model) {
+        modelSet.add(model);
       }
 
       // Tool call extraction from content blocks
-      if (Array.isArray(event.content)) {
-        for (const block of event.content as ContentBlock[]) {
+      const content = getContent(event);
+      if (Array.isArray(content)) {
+        for (const block of content as ContentBlock[]) {
           if (block.type === "tool_use") {
             const tb = block as ToolUseBlock;
             meta.toolCalls++;
@@ -90,9 +154,11 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
 
             // Extract file references from tool inputs
             const input = tb.input;
-            for (const key of ["file_path", "path", "filePath"]) {
-              if (input[key] && typeof input[key] === "string") {
-                fileSet.add(input[key] as string);
+            if (input) {
+              for (const key of ["file_path", "path", "filePath"]) {
+                if (input[key] && typeof input[key] === "string") {
+                  fileSet.add(input[key] as string);
+                }
               }
             }
           }
@@ -135,6 +201,7 @@ export async function parseSessionFile(
 
     try {
       const raw = JSON.parse(line) as RawJsonlEvent;
+      if (SKIP_TYPES.has(raw.type)) continue;
       const parsed = normalizeEvent(raw, sessionId, lineIndex);
       if (parsed.length > 0) {
         events.push(...parsed);
@@ -155,12 +222,12 @@ function normalizeEvent(
   const events: DevLogEvent[] = [];
   const timestamp = raw.timestamp ? new Date(raw.timestamp) : new Date();
   const baseId = raw.uuid || `${sessionId}-${lineIndex}`;
+  const role = resolveRole(raw);
+  const content = getContent(raw);
+  const model = getModel(raw);
 
-  if (
-    (raw.type === "human" || raw.type === "assistant") &&
-    Array.isArray(raw.content)
-  ) {
-    const blocks = raw.content as ContentBlock[];
+  if (role && Array.isArray(content)) {
+    const blocks = content as ContentBlock[];
     let blockIndex = 0;
 
     for (const block of blocks) {
@@ -173,12 +240,12 @@ function normalizeEvent(
           id: eventId,
           sessionId,
           timestamp,
-          role: raw.type as "human" | "assistant",
+          role: role,
           type: "text",
           content: textBlock.text,
           costUSD: raw.costUSD,
           durationMs: raw.durationMs,
-          model: raw.model,
+          model,
           raw,
         });
       } else if (block.type === "tool_use") {
@@ -211,14 +278,14 @@ function normalizeEvent(
       }
     }
 
-    if (typeof raw.content === "string") {
+    if (typeof content === "string") {
       events.push({
         id: baseId,
         sessionId,
         timestamp,
-        role: raw.type as "human" | "assistant",
+        role: role,
         type: "message",
-        content: raw.content,
+        content: content,
         raw,
       });
     }
@@ -228,20 +295,20 @@ function normalizeEvent(
         id: baseId,
         sessionId,
         timestamp,
-        role: raw.type as "human" | "assistant",
+        role: role,
         type: "message",
         content: extractTextContent(raw),
         raw,
       });
     }
-  } else if (raw.type === "human" && typeof raw.content === "string") {
+  } else if (role === "human" && typeof content === "string") {
     events.push({
       id: baseId,
       sessionId,
       timestamp,
       role: "human",
       type: "message",
-      content: raw.content,
+      content: content,
       raw,
     });
   } else if (raw.type === "summary") {
@@ -260,6 +327,17 @@ function normalizeEvent(
 }
 
 function extractTextContent(event: RawJsonlEvent): string {
+  // Check message.content first (real Claude Code format)
+  const msgContent = event.message && typeof event.message === "object" ? event.message.content : undefined;
+  if (typeof msgContent === "string") return msgContent;
+  if (Array.isArray(msgContent)) {
+    const textBlocks = (msgContent as ContentBlock[]).filter(
+      (b): b is TextBlock => b.type === "text"
+    );
+    if (textBlocks.length > 0) return textBlocks.map((b) => b.text).join("\n");
+  }
+
+  // Legacy format
   if (typeof event.content === "string") return event.content;
   if (Array.isArray(event.content)) {
     const textBlocks = event.content.filter(
@@ -267,7 +345,6 @@ function extractTextContent(event: RawJsonlEvent): string {
     );
     if (textBlocks.length > 0) return textBlocks.map((b) => b.text).join("\n");
   }
-  if (event.message && typeof event.message === "string") return event.message;
   return "";
 }
 
@@ -301,5 +378,5 @@ function extractToolResultContent(block: ToolResultBlock): string {
 
 function truncateStr(str: string, max: number): string {
   if (str.length <= max) return str;
-  return str.slice(0, max - 1) + "…";
+  return str.slice(0, max - 1) + "\u2026";
 }
