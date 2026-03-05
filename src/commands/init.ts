@@ -9,35 +9,49 @@ import {
   printError,
   formatNumber,
 } from "../utils/format.js";
+import type { GlobalOptions } from "../core/types.js";
+import { outputJson, isJsonMode, isQuietMode } from "../utils/output.js";
 
-export async function initCommand(): Promise<void> {
-  console.log();
-  console.log(
-    chalk.bold.cyan("  ▌") + chalk.bold.white(" DevLog Setup")
-  );
-  console.log();
+export async function initCommand(globalOpts: GlobalOptions): Promise<void> {
+  if (!isJsonMode()) {
+    console.log();
+    console.log(
+      chalk.bold.cyan("  ▌") + chalk.bold.white(" DevLog Setup")
+    );
+    console.log();
+  }
 
   // Already initialized
   if (isInitialized()) {
     const config = loadConfig();
-    printSuccess("DevLog is already set up");
-    console.log(
-      chalk.dim("    Config: ") + chalk.white(getDevlogDir() + "/config.toml")
-    );
-    console.log(
-      chalk.dim("    Claude: ") + chalk.white(config.claudeDir)
-    );
-    console.log();
 
-    const spinner = ora({
-      text: chalk.dim("  Checking your sessions..."),
-      spinner: "dots",
-      color: "cyan",
-    }).start();
+    let spinner: ReturnType<typeof ora> | null = null;
+    if (!isJsonMode() && !isQuietMode()) {
+      printSuccess("DevLog is already set up");
+      console.log(
+        chalk.dim("    Config: ") + chalk.white(getDevlogDir() + "/config.toml")
+      );
+      console.log(
+        chalk.dim("    Claude: ") + chalk.white(config.claudeDir)
+      );
+      console.log();
+
+      spinner = ora({
+        text: chalk.dim("  Checking your sessions..."),
+        spinner: "dots",
+        color: "cyan",
+        stream: process.stderr,
+      }).start();
+    }
 
     const projects = await discoverProjects(config.claudeDir);
     const stats = computeStats(projects);
-    spinner.stop();
+    spinner?.stop();
+
+    if (isJsonMode()) {
+      outputJson({ status: "already_initialized", configPath: getDevlogDir() + "/config.toml", stats: { totalProjects: stats.totalProjects, totalSessions: stats.totalSessions, totalMessages: stats.totalMessages } });
+      return;
+    }
 
     renderStatsBox(stats);
 
@@ -54,6 +68,10 @@ export async function initCommand(): Promise<void> {
   const claudeDir = getClaudeProjectsDir();
 
   if (!existsSync(claudeDir)) {
+    if (isJsonMode()) {
+      outputJson({ error: "Claude Code not found", path: claudeDir });
+      process.exit(1);
+    }
     printError("Claude Code not found");
     console.log();
     console.log(
@@ -74,20 +92,34 @@ export async function initCommand(): Promise<void> {
     return;
   }
 
-  printSuccess("Found Claude Code");
+  if (!isJsonMode()) {
+    printSuccess("Found Claude Code");
+  }
 
   const config = initConfig();
-  printSuccess("Created config at " + chalk.dim("~/.devlog/"));
 
-  const spinner = ora({
-    text: chalk.dim("  Scanning your Claude Code history..."),
-    spinner: "dots",
-    color: "cyan",
-  }).start();
+  if (!isJsonMode()) {
+    printSuccess("Created config at " + chalk.dim("~/.devlog/"));
+  }
+
+  let spinner: ReturnType<typeof ora> | null = null;
+  if (!isJsonMode() && !isQuietMode()) {
+    spinner = ora({
+      text: chalk.dim("  Scanning your Claude Code history..."),
+      spinner: "dots",
+      color: "cyan",
+      stream: process.stderr,
+    }).start();
+  }
 
   const projects = await discoverProjects(config.claudeDir);
   const stats = computeStats(projects);
-  spinner.stop();
+  spinner?.stop();
+
+  if (isJsonMode()) {
+    outputJson({ status: "initialized", configPath: getDevlogDir() + "/config.toml", stats: { totalProjects: stats.totalProjects, totalSessions: stats.totalSessions, totalMessages: stats.totalMessages } });
+    return;
+  }
 
   printSuccess("Scan complete");
   console.log();
@@ -115,6 +147,12 @@ function renderStatsBox(stats: ReturnType<typeof computeStats>): void {
     );
   };
 
+  const costStr = stats.totalCostUSD > 0
+    ? stats.totalCostUSD < 1
+      ? `$${stats.totalCostUSD.toFixed(3)}`
+      : `$${stats.totalCostUSD.toFixed(2)}`
+    : "";
+
   console.log(chalk.dim("  ┌" + "─".repeat(w) + "┐"));
   console.log(line("Projects", formatNumber(stats.totalProjects)));
   console.log(line("Conversations", formatNumber(stats.totalSessions)));
@@ -123,8 +161,8 @@ function renderStatsBox(stats: ReturnType<typeof computeStats>): void {
   console.log(
     line("Files touched", formatNumber(stats.allFilesReferenced.length))
   );
-  if (stats.totalCostUSD > 0) {
-    console.log(line("Total cost", `$${stats.totalCostUSD.toFixed(3)}`));
+  if (costStr) {
+    console.log(line("Total cost", costStr));
   }
   console.log(chalk.dim("  └" + "─".repeat(w) + "┘"));
   console.log();

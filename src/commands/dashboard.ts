@@ -7,25 +7,35 @@ import {
   computeStats,
   groupSessionsByTime,
 } from "../core/discovery.js";
-import type { Session, AggregateStats } from "../core/types.js";
+import type { Session, AggregateStats, GlobalOptions, DashboardJson } from "../core/types.js";
 import {
   formatSmartTime,
-  formatCost,
-  formatDuration,
   formatNumber,
   truncate,
+  costWithContext,
+  messageCountContext,
+  toolCountContext,
+  fileCountContext,
 } from "../utils/format.js";
 import { getClaudeProjectsDir } from "../utils/paths.js";
+import { outputJson, isJsonMode, isQuietMode } from "../utils/output.js";
+import { toSessionJson } from "./shared.js";
+
+const VERSION = "0.3.0";
 
 /**
  * The default command. This IS the product.
  * Run `devlog` → see your world with Claude.
  */
-export async function dashboardCommand(): Promise<void> {
+export async function dashboardCommand(globalOpts: GlobalOptions): Promise<void> {
   const { config, isFirstRun } = ensureInit();
 
   // ── No Claude Code installed ──────────────────────
   if (!existsSync(config.claudeDir)) {
+    if (isJsonMode()) {
+      outputJson({ error: "Claude Code not found", path: getClaudeProjectsDir() });
+      process.exit(1);
+    }
     console.log();
     console.log(
       chalk.bold.cyan("  ▌") + chalk.bold.white(" DevLog")
@@ -55,20 +65,28 @@ export async function dashboardCommand(): Promise<void> {
   }
 
   // ── Scan ──────────────────────────────────────────
-  const spinner = ora({
-    text: chalk.dim("  Reading your Claude Code history..."),
-    spinner: "dots",
-    color: "cyan",
-  }).start();
+  let spinner: ReturnType<typeof ora> | null = null;
+  if (!isJsonMode() && !isQuietMode()) {
+    spinner = ora({
+      text: chalk.dim("  Reading your Claude Code history..."),
+      spinner: "dots",
+      color: "cyan",
+      stream: process.stderr,
+    }).start();
+  }
 
   const projects = await discoverProjects(config.claudeDir, (msg) => {
-    spinner.text = chalk.dim(`  ${msg}`);
+    if (spinner) spinner.text = chalk.dim(`  ${msg}`);
   });
 
-  spinner.stop();
+  spinner?.stop();
 
   // ── No sessions yet ───────────────────────────────
   if (projects.length === 0) {
+    if (isJsonMode()) {
+      outputJson({ version: VERSION, timestamp: new Date().toISOString(), summary: "No sessions found", stats: { totalProjects: 0, totalSessions: 0, totalToolCalls: 0, totalFilesTouched: 0, totalCostUSD: 0, todaySessions: 0, todayCostUSD: 0 }, recentSessions: [] });
+      return;
+    }
     console.log();
     console.log(
       chalk.bold.cyan("  ▌") + chalk.bold.white(" DevLog")
@@ -87,18 +105,51 @@ export async function dashboardCommand(): Promise<void> {
   const stats = computeStats(projects);
   const groups = groupSessionsByTime(projects);
 
+  // ── JSON output ────────────────────────────────────
+  if (isJsonMode()) {
+    const allSessions = projects.flatMap((p) => p.sessions);
+    allSessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    const recent = allSessions.slice(0, 10);
+
+    const projectWord = stats.totalProjects === 1 ? "project" : "projects";
+    const sessionWord = stats.totalSessions === 1 ? "conversation" : "conversations";
+
+    const data: DashboardJson = {
+      version: VERSION,
+      timestamp: new Date().toISOString(),
+      summary: `You and Claude had ${stats.totalSessions} ${sessionWord} across ${stats.totalProjects} ${projectWord}`,
+      stats: {
+        totalProjects: stats.totalProjects,
+        totalSessions: stats.totalSessions,
+        totalToolCalls: stats.totalToolCalls,
+        totalFilesTouched: stats.allFilesReferenced.length,
+        totalCostUSD: Math.round(stats.totalCostUSD * 1000000) / 1000000,
+        todaySessions: stats.todaySessions,
+        todayCostUSD: Math.round(stats.todayCostUSD * 1000000) / 1000000,
+      },
+      recentSessions: recent.map(toSessionJson),
+    };
+    outputJson(data);
+    return;
+  }
+
   // ── Render ────────────────────────────────────────
   console.log();
 
-  if (isFirstRun) {
-    renderWelcome(stats);
-  } else {
-    renderBanner();
+  if (!isQuietMode()) {
+    if (isFirstRun) {
+      renderWelcome(stats);
+    } else {
+      renderBanner();
+    }
   }
 
   renderNarrativeStats(stats);
   renderSessionGroups(groups, stats);
-  renderNextSteps(stats, isFirstRun);
+
+  if (!isQuietMode()) {
+    renderNextSteps(stats, isFirstRun);
+  }
 }
 
 // ─────────────────────────────────────────────────────
@@ -126,7 +177,6 @@ function renderBanner(): void {
 }
 
 function renderNarrativeStats(stats: AggregateStats): void {
-  // Main narrative: "You and Claude" story
   const projectWord = stats.totalProjects === 1 ? "project" : "projects";
   const sessionWord = stats.totalSessions === 1 ? "conversation" : "conversations";
 
@@ -139,7 +189,6 @@ function renderNarrativeStats(stats: AggregateStats): void {
       chalk.white(` ${projectWord}.`)
   );
 
-  // Activity line — what actually happened
   const activityParts: string[] = [];
 
   if (stats.totalToolCalls > 0) {
@@ -162,7 +211,6 @@ function renderNarrativeStats(stats: AggregateStats): void {
     console.log(chalk.dim("  ") + activityParts.join(chalk.dim(" and ")));
   }
 
-  // Cost line — only if there's data, with context
   if (stats.totalCostUSD > 0) {
     const costStr = stats.totalCostUSD < 1
       ? `$${stats.totalCostUSD.toFixed(3)}`
@@ -181,7 +229,6 @@ function renderNarrativeStats(stats: AggregateStats): void {
     );
   }
 
-  // Today highlight
   if (stats.todaySessions > 0) {
     const todayWord = stats.todaySessions === 1 ? "session" : "sessions";
     console.log(
@@ -259,7 +306,6 @@ function renderSessionCard(session: Session, accentColor: typeof chalk): void {
     ? truncate(m.firstUserMessage.replace(/\n/g, " ").trim(), 50)
     : chalk.dim("(empty session)");
 
-  // Line 1: Time + Project name + What you asked
   const timeStr = time.length > 14 ? time.slice(0, 14) : time;
   console.log(
     chalk.dim("  ") +
@@ -268,33 +314,12 @@ function renderSessionCard(session: Session, accentColor: typeof chalk): void {
       chalk.white(preview)
   );
 
-  // Line 2: Human-readable activity summary
-  const parts: string[] = [];
-
-  // Conversation depth
   const turns = m.humanTurns + m.assistantTurns;
-  if (turns <= 4) {
-    parts.push(chalk.dim("quick chat"));
-  } else if (turns <= 10) {
-    parts.push(chalk.dim(`${turns} messages`));
-  } else {
-    parts.push(chalk.white(`${turns} messages`));
-  }
-
-  // What Claude did (in plain language)
-  if (m.toolCalls > 0) {
-    parts.push(chalk.green(`ran ${m.toolCalls} commands`));
-  }
-
-  if (m.filesReferenced.length > 0) {
-    const fileWord = m.filesReferenced.length === 1 ? "file" : "files";
-    parts.push(chalk.blue(`wrote ${m.filesReferenced.length} ${fileWord}`));
-  }
-
-  if (m.totalCostUSD > 0) {
-    parts.push(formatCost(m.totalCostUSD));
-  }
-
+  const parts: string[] = [];
+  parts.push(messageCountContext(turns));
+  if (m.toolCalls > 0) parts.push(toolCountContext(m.toolCalls));
+  if (m.filesReferenced.length > 0) parts.push(fileCountContext(m.filesReferenced.length));
+  if (m.totalCostUSD > 0) parts.push(costWithContext(m.totalCostUSD));
   if (m.errorCount > 0) {
     const errWord = m.errorCount === 1 ? "error" : "errors";
     parts.push(chalk.red(`${m.errorCount} ${errWord}`));
@@ -313,20 +338,23 @@ function renderNextSteps(stats: AggregateStats, isFirstRun: boolean): void {
   console.log();
 
   if (isFirstRun) {
-    // First run: teach the user what they can do
     console.log(chalk.white("  What you can do next:"));
     console.log();
+    console.log(
+      chalk.cyan("  devlog today") +
+        chalk.dim("               What did I do today?")
+    );
     console.log(
       chalk.cyan("  devlog sessions") +
         chalk.dim("            Browse all sessions by project")
     );
     console.log(
-      chalk.cyan("  devlog sessions -p chat") +
-        chalk.dim("    Filter to a specific project")
-    );
-    console.log(
       chalk.cyan("  devlog show <id>") +
         chalk.dim("           View a full conversation")
+    );
+    console.log(
+      chalk.cyan("  devlog search \"auth\"") +
+        chalk.dim("      Find a conversation")
     );
     console.log();
     console.log(
@@ -335,14 +363,16 @@ function renderNextSteps(stats: AggregateStats, isFirstRun: boolean): void {
         chalk.dim(" anytime to see this dashboard.")
     );
   } else {
-    // Returning user: compact hints
     console.log(
       chalk.dim("  ") +
+        chalk.cyan("devlog today") +
+        chalk.dim(" today  ·  ") +
         chalk.cyan("devlog sessions") +
-        chalk.dim(" all sessions  ·  ") +
+        chalk.dim(" all  ·  ") +
         chalk.cyan("devlog show <id>") +
-        chalk.dim(" view conversation  ·  ") +
-        chalk.cyan("--help")
+        chalk.dim(" view  ·  ") +
+        chalk.cyan("devlog search") +
+        chalk.dim(" find")
     );
   }
   console.log();

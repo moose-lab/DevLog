@@ -2,14 +2,18 @@ import chalk from "chalk";
 import ora from "ora";
 import { ensureInit } from "../core/config.js";
 import { discoverProjects, computeStats } from "../core/discovery.js";
-import type { Session } from "../core/types.js";
+import type { Session, GlobalOptions, SessionsJson } from "../core/types.js";
 import {
-  printWarn,
   formatSmartTime,
-  formatCost,
   truncate,
   formatNumber,
+  costWithContext,
+  messageCountContext,
+  toolCountContext,
+  fileCountContext,
 } from "../utils/format.js";
+import { outputJson, isJsonMode, isQuietMode } from "../utils/output.js";
+import { toSessionJson } from "./shared.js";
 
 interface SessionsOptions {
   project?: string;
@@ -17,21 +21,29 @@ interface SessionsOptions {
   all?: boolean;
 }
 
-export async function sessionsCommand(options: SessionsOptions): Promise<void> {
-  const { config } = ensureInit();
+export async function sessionsCommand(options: SessionsOptions, globalOpts: GlobalOptions): Promise<void> {
+  const { config, isFirstRun } = ensureInit();
   const limit = options.all ? Infinity : parseInt(options.limit || "30", 10);
 
-  const spinner = ora({
-    text: chalk.dim("  Scanning sessions..."),
-    spinner: "dots",
-    color: "cyan",
-  }).start();
+  let spinner: ReturnType<typeof ora> | null = null;
+  if (!isJsonMode() && !isQuietMode()) {
+    spinner = ora({
+      text: chalk.dim("  Scanning sessions..."),
+      spinner: "dots",
+      color: "cyan",
+      stream: process.stderr,
+    }).start();
+  }
 
   const projects = await discoverProjects(config.claudeDir);
   const stats = computeStats(projects);
-  spinner.stop();
+  spinner?.stop();
 
   if (projects.length === 0) {
+    if (isJsonMode()) {
+      outputJson({ projects: [] });
+      return;
+    }
     console.log();
     console.log(chalk.white("  No sessions found yet."));
     console.log(
@@ -49,6 +61,20 @@ export async function sessionsCommand(options: SessionsOptions): Promise<void> {
           p.path.toLowerCase().includes(options.project!.toLowerCase())
       )
     : projects;
+
+  // ── JSON output ────────────────────────────────────
+  if (isJsonMode()) {
+    const data: SessionsJson = {
+      projects: filteredProjects.map((p) => ({
+        name: p.name,
+        path: p.path,
+        sessionCount: p.sessionCount,
+        sessions: p.sessions.map(toSessionJson),
+      })),
+    };
+    outputJson(data);
+    return;
+  }
 
   if (filteredProjects.length === 0) {
     console.log();
@@ -87,13 +113,24 @@ export async function sessionsCommand(options: SessionsOptions): Promise<void> {
   );
   console.log();
 
+  if (isFirstRun) {
+    console.log(
+      chalk.dim("  Each project shows your Claude conversations, newest first.")
+    );
+    console.log(
+      chalk.dim("  Pick one with ") +
+        chalk.cyan("devlog show <number>") +
+        chalk.dim(" to see the full chat.")
+    );
+    console.log();
+  }
+
   let displayedCount = 0;
   let sessionIndex = 0;
 
   for (const project of filteredProjects) {
     if (displayedCount >= limit) break;
 
-    // Project header
     const sessionWord = project.sessionCount === 1 ? "session" : "sessions";
     console.log(
       chalk.bold.white("  📁 " + project.name) +
@@ -141,32 +178,17 @@ function renderSessionRow(session: Session, index: number): void {
     ? truncate(m.firstUserMessage.replace(/\n/g, " ").trim(), 46)
     : chalk.dim("(empty)");
 
-  // Line 1: index + time + first message
   const indexStr = chalk.dim(`${index}.`.padEnd(4));
   console.log(
     chalk.dim("   ") + indexStr + chalk.white(time.padEnd(16)) + chalk.white(preview)
   );
 
-  // Line 2: human-readable activity summary
-  const parts: string[] = [];
   const turns = m.humanTurns + m.assistantTurns;
-
-  if (turns <= 4) {
-    parts.push(chalk.dim("quick chat"));
-  } else {
-    parts.push(chalk.dim(`${turns} messages`));
-  }
-
-  if (m.toolCalls > 0) {
-    parts.push(chalk.green(`ran ${m.toolCalls} commands`));
-  }
-  if (m.filesReferenced.length > 0) {
-    const fileWord = m.filesReferenced.length === 1 ? "file" : "files";
-    parts.push(chalk.blue(`wrote ${m.filesReferenced.length} ${fileWord}`));
-  }
-  if (m.totalCostUSD > 0) {
-    parts.push(formatCost(m.totalCostUSD));
-  }
+  const parts: string[] = [];
+  parts.push(messageCountContext(turns));
+  if (m.toolCalls > 0) parts.push(toolCountContext(m.toolCalls));
+  if (m.filesReferenced.length > 0) parts.push(fileCountContext(m.filesReferenced.length));
+  if (m.totalCostUSD > 0) parts.push(costWithContext(m.totalCostUSD));
   if (m.errorCount > 0) {
     parts.push(chalk.red(`${m.errorCount} error${m.errorCount === 1 ? "" : "s"}`));
   }
