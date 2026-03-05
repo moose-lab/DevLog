@@ -4,12 +4,13 @@ import dayjs from "dayjs";
 import isToday from "dayjs/plugin/isToday.js";
 import { ensureInit } from "../core/config.js";
 import { discoverProjects, computeStats } from "../core/discovery.js";
-import type { Session, GlobalOptions } from "../core/types.js";
+import type { Session, GlobalOptions, AggregateStats } from "../core/types.js";
 import {
   formatNumber,
   costWithContext,
 } from "../utils/format.js";
 import { outputJson, isJsonMode, isQuietMode } from "../utils/output.js";
+import { updateCacheFromStats } from "../core/cache.js";
 
 dayjs.extend(isToday);
 
@@ -53,6 +54,11 @@ export async function statsCommand(
 
   const projects = await discoverProjects(config.claudeDir);
   spinner?.stop();
+
+  // Update cache as side effect of full scan
+  if (projects.length > 0) {
+    updateCacheFromStats(computeStats(projects));
+  }
 
   const allSessions: Session[] = [];
   for (const p of projects) allSessions.push(...p.sessions);

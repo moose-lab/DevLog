@@ -8,11 +8,13 @@ import { todayCommand } from "./commands/today.js";
 import { searchCommand } from "./commands/search.js";
 import { statsCommand } from "./commands/stats.js";
 import { costCommand } from "./commands/cost.js";
+import { statuslineCommand } from "./commands/statusline.js";
+import { setupStatuslineCommand } from "./commands/setup-statusline.js";
 import { initOutput, outputJson } from "./utils/output.js";
 import { levenshtein } from "./utils/format.js";
 import type { GlobalOptions } from "./core/types.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 const HELP_TEXT = `
 ${chalk.bold.cyan("  ▌")} ${chalk.bold.white("DevLog")} ${chalk.dim(`v${VERSION}`)}
@@ -33,6 +35,10 @@ ${chalk.cyan("  devlog search \"auth bug\"")}${chalk.dim("    Find a conversatio
 ${chalk.cyan("  devlog stats")}${chalk.dim("                 Usage trends")}
 ${chalk.cyan("  devlog cost")}${chalk.dim("                  Cost breakdown")}
 
+${chalk.bold.white("  Agent Integration:")}
+${chalk.cyan("  devlog setup-statusline")}${chalk.dim("        Configure Claude Code status bar")}
+${chalk.cyan("  devlog statusline")}${chalk.dim("             Output status line (used by Claude Code)")}
+
 ${chalk.bold.white("  Output Modes:")}
 ${chalk.cyan("  devlog --json")}${chalk.dim("                JSON output for scripts/agents")}
 ${chalk.cyan("  devlog -q")}${chalk.dim("                    Quiet mode (no spinners/banners)")}
@@ -49,6 +55,8 @@ const KNOWN_COMMANDS = [
   "search",
   "stats",
   "cost",
+  "statusline",
+  "setup-statusline",
 ];
 
 function getGlobalOpts(): GlobalOptions {
@@ -190,6 +198,32 @@ program
     const globalOpts = getGlobalOpts();
     try {
       await costCommand(options, globalOpts);
+    } catch (err) {
+      handleError(err, globalOpts);
+    }
+  });
+
+// ── devlog statusline ───────────────────────────────────
+program
+  .command("statusline")
+  .description("Output status line for Claude Code integration")
+  .option("--no-cache", "Force refresh, skip cache")
+  .action(async (options) => {
+    try {
+      await statuslineCommand(options);
+    } catch {
+      // Silent failure — status line must never crash
+    }
+  });
+
+// ── devlog setup-statusline ─────────────────────────────
+program
+  .command("setup-statusline")
+  .description("Configure Claude Code status bar integration")
+  .action(async () => {
+    const globalOpts = getGlobalOpts();
+    try {
+      await setupStatuslineCommand();
     } catch (err) {
       handleError(err, globalOpts);
     }
