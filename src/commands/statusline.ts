@@ -9,7 +9,14 @@ interface StatuslineOptions {
 }
 
 interface StdinSession {
-  costUSD?: number;
+  context_window?: {
+    used_percentage?: number;
+    used_tokens?: number;
+    total_tokens?: number;
+  };
+  model?: string;
+  turn_number?: number;
+  session_id?: string;
 }
 
 export async function statuslineCommand(options: StatuslineOptions): Promise<void> {
@@ -72,16 +79,16 @@ async function readStdinWithTimeout(ms: number): Promise<StdinSession | null> {
 function formatStatusLine(cache: StatsCache, stdinData: StdinSession | null): string {
   const parts: string[] = [];
 
-  // Session cost from stdin
-  if (stdinData?.costUSD != null && stdinData.costUSD > 0) {
-    parts.push(`${formatCost(stdinData.costUSD)} this session`);
+  // Context window from Claude Code stdin
+  if (stdinData?.context_window?.used_percentage != null) {
+    parts.push(`ctx ${stdinData.context_window.used_percentage}%`);
   }
 
   // Today stats
   if (cache.today.sessions > 0) {
     const sessionWord = cache.today.sessions === 1 ? "session" : "sessions";
     parts.push(`${formatCost(cache.today.costUSD)} today (${cache.today.sessions} ${sessionWord})`);
-  } else if (!stdinData?.costUSD) {
+  } else {
     parts.push("No sessions today");
   }
 
