@@ -20,8 +20,9 @@ import {
 import { getClaudeProjectsDir } from "../utils/paths.js";
 import { outputJson, isJsonMode, isQuietMode } from "../utils/output.js";
 import { toSessionJson } from "./shared.js";
+import { updateCacheFromStats } from "../core/cache.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 /**
  * The default command. This IS the product.
@@ -103,6 +104,7 @@ export async function dashboardCommand(globalOpts: GlobalOptions): Promise<void>
   }
 
   const stats = computeStats(projects);
+  updateCacheFromStats(stats);
   const groups = groupSessionsByTime(projects);
 
   // ── JSON output ────────────────────────────────────

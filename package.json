@@ -1,6 +1,6 @@
 {
   "name": "@moose-lab/devlog",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Auto-generate dev logs from your Claude Code sessions",
   "type": "module",
   "bin": {
