@@ -1,6 +1,18 @@
 // ── Core Types ─────────────────────────────────────────────
 
 export type MessageRole = "human" | "assistant";
+
+export interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
+export interface GlobalOptions {
+  json: boolean;
+  quiet: boolean;
+}
 export type ContentBlockType = "text" | "tool_use" | "tool_result";
 
 export interface TextBlock {
@@ -41,6 +53,14 @@ export interface RawJsonlEvent {
   cacheReadInputTokens?: number;
   inputTokens?: number;
   outputTokens?: number;
+  message?: {
+    role?: string;
+    content?: ContentBlock[] | string;
+    model?: string;
+    type?: string;
+    usage?: TokenUsage;
+    id?: string;
+  };
   [key: string]: unknown;
 }
 
@@ -78,6 +98,7 @@ export interface SessionMeta {
   lastActivity: Date;
   firstActivity: Date;
   errorCount: number;
+  costByModel: Record<string, number>;
 }
 
 export interface Session {
@@ -125,4 +146,60 @@ export interface AggregateStats {
   todayCostUSD: number;
   mostActiveProject: string;
   mostActiveProjectSessions: number;
+}
+
+// ── JSON Output Types ──────────────────────────────────────
+
+export interface SessionJson {
+  id: string;
+  projectName: string;
+  projectPath: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  toolCalls: number;
+  filesTouched: number;
+  costUSD: number;
+  firstMessage: string;
+}
+
+export interface DashboardJson {
+  version: string;
+  timestamp: string;
+  summary: string;
+  stats: {
+    totalProjects: number;
+    totalSessions: number;
+    totalToolCalls: number;
+    totalFilesTouched: number;
+    totalCostUSD: number;
+    todaySessions: number;
+    todayCostUSD: number;
+  };
+  recentSessions: SessionJson[];
+}
+
+export interface SessionsJson {
+  projects: {
+    name: string;
+    path: string;
+    sessionCount: number;
+    sessions: SessionJson[];
+  }[];
+}
+
+export interface ShowJson {
+  session: {
+    id: string;
+    projectName: string;
+    meta: SessionMeta;
+  };
+  events: {
+    timestamp: string;
+    role: string;
+    type: string;
+    content: string;
+    toolName?: string;
+    isError?: boolean;
+  }[];
 }
