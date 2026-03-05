@@ -2,7 +2,7 @@
 
 // src/cli.ts
 import { Command } from "commander";
-import chalk6 from "chalk";
+import chalk10 from "chalk";
 
 // src/commands/dashboard.ts
 import chalk2 from "chalk";
@@ -113,6 +113,61 @@ import { existsSync as existsSync2 } from "fs";
 // src/core/parser.ts
 import { createReadStream } from "fs";
 import { createInterface } from "readline";
+
+// src/core/pricing.ts
+var PRICING = {
+  "claude-opus-4-6": { input: 15, output: 75, cacheCreation: 18.75, cacheRead: 1.5 },
+  "claude-opus-4-5-20251101": { input: 15, output: 75, cacheCreation: 18.75, cacheRead: 1.5 },
+  "claude-sonnet-4-6": { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.3 },
+  "claude-sonnet-4-5-20241022": { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.3 },
+  "claude-haiku-4-5-20251001": { input: 0.8, output: 4, cacheCreation: 1, cacheRead: 0.08 }
+};
+var FALLBACK = { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.3 };
+function findPricing(model) {
+  if (PRICING[model]) return PRICING[model];
+  for (const [key, val] of Object.entries(PRICING)) {
+    if (model.includes(key) || key.includes(model)) return val;
+  }
+  if (model.includes("opus")) return PRICING["claude-opus-4-6"];
+  if (model.includes("haiku")) return PRICING["claude-haiku-4-5-20251001"];
+  if (model.includes("sonnet")) return PRICING["claude-sonnet-4-6"];
+  return FALLBACK;
+}
+function computeCost(model, usage) {
+  const p = findPricing(model);
+  const perM = 1e6;
+  let cost = 0;
+  cost += (usage.input_tokens || 0) * p.input / perM;
+  cost += (usage.output_tokens || 0) * p.output / perM;
+  cost += (usage.cache_creation_input_tokens || 0) * p.cacheCreation / perM;
+  cost += (usage.cache_read_input_tokens || 0) * p.cacheRead / perM;
+  return cost;
+}
+
+// src/core/parser.ts
+var SKIP_TYPES = /* @__PURE__ */ new Set([
+  "progress",
+  "file-history-snapshot",
+  "queue-operation"
+]);
+function resolveRole(event) {
+  const t = event.type;
+  if (t === "human" || t === "user") return "human";
+  if (t === "assistant") return "assistant";
+  return null;
+}
+function getContent(event) {
+  if (event.message && typeof event.message === "object" && event.message.content != null) {
+    return event.message.content;
+  }
+  return event.content;
+}
+function getModel(event) {
+  if (event.message && typeof event.message === "object" && event.message.model) {
+    return event.message.model;
+  }
+  return event.model;
+}
 async function scanSession(filePath) {
   const meta = {
     messageCount: 0,
@@ -127,7 +182,8 @@ async function scanSession(filePath) {
     firstUserMessage: "",
     lastActivity: /* @__PURE__ */ new Date(0),
     firstActivity: /* @__PURE__ */ new Date(),
-    errorCount: 0
+    errorCount: 0,
+    costByModel: {}
   };
   const toolSet = /* @__PURE__ */ new Set();
   const fileSet = /* @__PURE__ */ new Set();
@@ -140,41 +196,60 @@ async function scanSession(filePath) {
     if (!line.trim()) continue;
     try {
       const event = JSON.parse(line);
+      if (SKIP_TYPES.has(event.type)) continue;
       const ts = event.timestamp ? new Date(event.timestamp) : null;
       if (ts) {
         if (ts < meta.firstActivity) meta.firstActivity = ts;
         if (ts > meta.lastActivity) meta.lastActivity = ts;
       }
-      if (event.type === "human") {
+      const role = resolveRole(event);
+      if (role === "human") {
         meta.humanTurns++;
         meta.messageCount++;
       }
-      if (event.type === "assistant") {
+      if (role === "assistant") {
         meta.assistantTurns++;
         meta.messageCount++;
       }
-      if (event.type === "human" && !meta.firstUserMessage) {
+      if (role === "human" && !meta.firstUserMessage) {
         meta.firstUserMessage = extractTextContent(event);
       }
-      if (event.costUSD && typeof event.costUSD === "number") {
+      const model = getModel(event);
+      const usage = event.message && typeof event.message === "object" ? event.message.usage : void 0;
+      if (model && usage) {
+        const cost = computeCost(model, usage);
+        meta.totalCostUSD += cost;
+        meta.costByModel[model] = (meta.costByModel[model] || 0) + cost;
+      } else if (event.costUSD && typeof event.costUSD === "number") {
         meta.totalCostUSD += event.costUSD;
+        const m = model || "unknown";
+        meta.costByModel[m] = (meta.costByModel[m] || 0) + event.costUSD;
+      }
+      if (event.type === "system" && event.subtype === "turn_duration") {
+        const dur = event.durationMs;
+        if (typeof dur === "number") {
+          meta.totalDurationMs += dur;
+        }
       }
       if (event.durationMs && typeof event.durationMs === "number") {
         meta.totalDurationMs += event.durationMs;
       }
-      if (event.model && typeof event.model === "string") {
-        modelSet.add(event.model);
+      if (model) {
+        modelSet.add(model);
       }
-      if (Array.isArray(event.content)) {
-        for (const block of event.content) {
+      const content = getContent(event);
+      if (Array.isArray(content)) {
+        for (const block of content) {
           if (block.type === "tool_use") {
             const tb = block;
             meta.toolCalls++;
             toolSet.add(tb.name);
             const input = tb.input;
-            for (const key of ["file_path", "path", "filePath"]) {
-              if (input[key] && typeof input[key] === "string") {
-                fileSet.add(input[key]);
+            if (input) {
+              for (const key of ["file_path", "path", "filePath"]) {
+                if (input[key] && typeof input[key] === "string") {
+                  fileSet.add(input[key]);
+                }
               }
             }
           }
@@ -205,6 +280,7 @@ async function parseSessionFile(filePath, sessionId) {
     lineIndex++;
     try {
       const raw = JSON.parse(line);
+      if (SKIP_TYPES.has(raw.type)) continue;
       const parsed = normalizeEvent(raw, sessionId, lineIndex);
       if (parsed.length > 0) {
         events.push(...parsed);
@@ -219,8 +295,11 @@ function normalizeEvent(raw, sessionId, lineIndex) {
   const events = [];
   const timestamp = raw.timestamp ? new Date(raw.timestamp) : /* @__PURE__ */ new Date();
   const baseId = raw.uuid || `${sessionId}-${lineIndex}`;
-  if ((raw.type === "human" || raw.type === "assistant") && Array.isArray(raw.content)) {
-    const blocks = raw.content;
+  const role = resolveRole(raw);
+  const content = getContent(raw);
+  const model = getModel(raw);
+  if (role && Array.isArray(content)) {
+    const blocks = content;
     let blockIndex = 0;
     for (const block of blocks) {
       blockIndex++;
@@ -231,12 +310,12 @@ function normalizeEvent(raw, sessionId, lineIndex) {
           id: eventId,
           sessionId,
           timestamp,
-          role: raw.type,
+          role,
           type: "text",
           content: textBlock.text,
           costUSD: raw.costUSD,
           durationMs: raw.durationMs,
-          model: raw.model,
+          model,
           raw
         });
       } else if (block.type === "tool_use") {
@@ -268,14 +347,14 @@ function normalizeEvent(raw, sessionId, lineIndex) {
         });
       }
     }
-    if (typeof raw.content === "string") {
+    if (typeof content === "string") {
       events.push({
         id: baseId,
         sessionId,
         timestamp,
-        role: raw.type,
+        role,
         type: "message",
-        content: raw.content,
+        content,
         raw
       });
     }
@@ -284,20 +363,20 @@ function normalizeEvent(raw, sessionId, lineIndex) {
         id: baseId,
         sessionId,
         timestamp,
-        role: raw.type,
+        role,
         type: "message",
         content: extractTextContent(raw),
         raw
       });
     }
-  } else if (raw.type === "human" && typeof raw.content === "string") {
+  } else if (role === "human" && typeof content === "string") {
     events.push({
       id: baseId,
       sessionId,
       timestamp,
       role: "human",
       type: "message",
-      content: raw.content,
+      content,
       raw
     });
   } else if (raw.type === "summary") {
@@ -314,6 +393,14 @@ function normalizeEvent(raw, sessionId, lineIndex) {
   return events;
 }
 function extractTextContent(event) {
+  const msgContent = event.message && typeof event.message === "object" ? event.message.content : void 0;
+  if (typeof msgContent === "string") return msgContent;
+  if (Array.isArray(msgContent)) {
+    const textBlocks = msgContent.filter(
+      (b) => b.type === "text"
+    );
+    if (textBlocks.length > 0) return textBlocks.map((b) => b.text).join("\n");
+  }
   if (typeof event.content === "string") return event.content;
   if (Array.isArray(event.content)) {
     const textBlocks = event.content.filter(
@@ -321,7 +408,6 @@ function extractTextContent(event) {
     );
     if (textBlocks.length > 0) return textBlocks.map((b) => b.text).join("\n");
   }
-  if (event.message && typeof event.message === "string") return event.message;
   return "";
 }
 function summarizeToolInput(input) {
@@ -537,12 +623,6 @@ function truncate(str, maxLen) {
   if (str.length <= maxLen) return str;
   return str.slice(0, maxLen - 1) + "\u2026";
 }
-function formatCost(usd) {
-  if (usd === 0) return chalk.dim("\u2014");
-  if (usd < 0.01) return chalk.green(`$${usd.toFixed(4)}`);
-  if (usd < 1) return chalk.green(`$${usd.toFixed(3)}`);
-  return chalk.yellow(`$${usd.toFixed(2)}`);
-}
 function formatNumber(n) {
   return n.toLocaleString();
 }
@@ -550,13 +630,142 @@ function printSuccess(msg) {
   console.log(chalk.green("  \u2713 ") + msg);
 }
 function printError(msg) {
-  console.log(chalk.red("  \u2717 ") + msg);
+  console.error(chalk.red("  \u2717 ") + msg);
+}
+var TOOL_NAMES = {
+  Bash: "ran a command",
+  Read: "read a file",
+  Write: "wrote a file",
+  Edit: "edited a file",
+  Glob: "searched for files",
+  Grep: "searched code",
+  Agent: "used an agent",
+  WebSearch: "searched the web",
+  WebFetch: "fetched a page",
+  TodoWrite: "updated todos",
+  TodoRead: "checked todos"
+};
+function humanizeToolName(name) {
+  if (TOOL_NAMES[name]) return TOOL_NAMES[name];
+  return name.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+}
+var TOOL_PLURALS = {
+  Bash: { singular: "ran a command", plural: "ran commands" },
+  Read: { singular: "read a file", plural: "read files" },
+  Write: { singular: "wrote a file", plural: "wrote files" },
+  Edit: { singular: "edited a file", plural: "edited files" },
+  Glob: { singular: "searched for files", plural: "searched for files" },
+  Grep: { singular: "searched code", plural: "searched code" },
+  Agent: { singular: "used an agent", plural: "used agents" }
+};
+function humanizeToolSummary(tools) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const t of tools) {
+    counts.set(t, (counts.get(t) || 0) + 1);
+  }
+  const parts = [];
+  for (const [name, count] of counts) {
+    const p = TOOL_PLURALS[name];
+    if (p) {
+      parts.push(count === 1 ? p.singular : `${p.plural}`);
+    } else {
+      const human = humanizeToolName(name);
+      parts.push(count === 1 ? human : `${human} (\xD7${count})`);
+    }
+  }
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return `Claude ${parts[0]}`;
+  const last = parts.pop();
+  return `Claude ${parts.join(", ")}, and ${last}`;
+}
+function costWithContext(usd) {
+  if (usd === 0) return chalk.dim("\u2014");
+  const formatted = usd < 0.01 ? `$${usd.toFixed(4)}` : usd < 1 ? `$${usd.toFixed(3)}` : `$${usd.toFixed(2)}`;
+  let context = "";
+  if (usd < 0.01) context = " \u2014 barely a penny";
+  else if (usd < 0.05) context = " \u2014 pocket change";
+  else if (usd < 0.15) context = " \u2014 pretty efficient";
+  else if (usd < 0.5) context = " \u2014 a good session";
+  else if (usd < 1) context = " \u2014 solid investment";
+  else if (usd < 5) context = " \u2014 heavy session";
+  else context = " \u2014 serious work";
+  return chalk.yellow(formatted) + chalk.dim(context);
+}
+function messageCountContext(turns) {
+  if (turns <= 2) return chalk.dim("quick question");
+  if (turns <= 4) return chalk.dim("quick chat");
+  if (turns <= 10) return chalk.dim(`${turns} messages`);
+  if (turns <= 25) return chalk.white(`${turns} messages`) + chalk.dim(" \u2014 solid session");
+  if (turns <= 50) return chalk.white(`${turns} messages`) + chalk.dim(" \u2014 deep dive");
+  return chalk.white(`${turns} messages`) + chalk.dim(" \u2014 marathon");
+}
+function fileCountContext(count) {
+  if (count === 0) return "";
+  if (count === 1) return chalk.blue("touched 1 file");
+  if (count <= 5) return chalk.blue(`touched ${count} files`);
+  if (count <= 15) return chalk.blue(`touched ${count} files`) + chalk.dim(" \u2014 broad changes");
+  return chalk.blue(`touched ${count} files`) + chalk.dim(" \u2014 major refactor");
+}
+function toolCountContext(count) {
+  if (count === 0) return "";
+  if (count <= 10) return chalk.green(`ran ${count} commands`);
+  if (count <= 30) return chalk.green(`ran ${count} commands`) + chalk.dim(" \u2014 busy session");
+  return chalk.green(`ran ${count} commands`) + chalk.dim(" \u2014 heavy automation");
+}
+function levenshtein(a, b) {
+  const m = a.length;
+  const n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+// src/utils/output.ts
+var ctx = { json: false, quiet: false };
+function initOutput(opts) {
+  ctx = opts;
+}
+function outputJson(data) {
+  process.stdout.write(JSON.stringify(data, null, 2) + "\n");
+}
+function isJsonMode() {
+  return ctx.json;
+}
+function isQuietMode() {
+  return ctx.quiet;
+}
+
+// src/commands/shared.ts
+function toSessionJson(session) {
+  return {
+    id: session.id,
+    projectName: session.projectName,
+    projectPath: session.projectPath,
+    createdAt: session.createdAt.toISOString(),
+    updatedAt: session.updatedAt.toISOString(),
+    messageCount: session.meta.messageCount,
+    toolCalls: session.meta.toolCalls,
+    filesTouched: session.meta.filesReferenced.length,
+    costUSD: Math.round(session.meta.totalCostUSD * 1e6) / 1e6,
+    firstMessage: session.meta.firstUserMessage
+  };
 }
 
 // src/commands/dashboard.ts
-async function dashboardCommand() {
+var VERSION = "0.3.0";
+async function dashboardCommand(globalOpts) {
   const { config, isFirstRun } = ensureInit();
   if (!existsSync3(config.claudeDir)) {
+    if (isJsonMode()) {
+      outputJson({ error: "Claude Code not found", path: getClaudeProjectsDir() });
+      process.exit(1);
+    }
     console.log();
     console.log(
       chalk2.bold.cyan("  \u258C") + chalk2.bold.white(" DevLog")
@@ -584,16 +793,24 @@ async function dashboardCommand() {
     console.log();
     return;
   }
-  const spinner = ora({
-    text: chalk2.dim("  Reading your Claude Code history..."),
-    spinner: "dots",
-    color: "cyan"
-  }).start();
+  let spinner = null;
+  if (!isJsonMode() && !isQuietMode()) {
+    spinner = ora({
+      text: chalk2.dim("  Reading your Claude Code history..."),
+      spinner: "dots",
+      color: "cyan",
+      stream: process.stderr
+    }).start();
+  }
   const projects = await discoverProjects(config.claudeDir, (msg) => {
-    spinner.text = chalk2.dim(`  ${msg}`);
+    if (spinner) spinner.text = chalk2.dim(`  ${msg}`);
   });
-  spinner.stop();
+  spinner?.stop();
   if (projects.length === 0) {
+    if (isJsonMode()) {
+      outputJson({ version: VERSION, timestamp: (/* @__PURE__ */ new Date()).toISOString(), summary: "No sessions found", stats: { totalProjects: 0, totalSessions: 0, totalToolCalls: 0, totalFilesTouched: 0, totalCostUSD: 0, todaySessions: 0, todayCostUSD: 0 }, recentSessions: [] });
+      return;
+    }
     console.log();
     console.log(
       chalk2.bold.cyan("  \u258C") + chalk2.bold.white(" DevLog")
@@ -610,15 +827,43 @@ async function dashboardCommand() {
   }
   const stats = computeStats(projects);
   const groups = groupSessionsByTime(projects);
+  if (isJsonMode()) {
+    const allSessions = projects.flatMap((p) => p.sessions);
+    allSessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    const recent = allSessions.slice(0, 10);
+    const projectWord = stats.totalProjects === 1 ? "project" : "projects";
+    const sessionWord = stats.totalSessions === 1 ? "conversation" : "conversations";
+    const data = {
+      version: VERSION,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      summary: `You and Claude had ${stats.totalSessions} ${sessionWord} across ${stats.totalProjects} ${projectWord}`,
+      stats: {
+        totalProjects: stats.totalProjects,
+        totalSessions: stats.totalSessions,
+        totalToolCalls: stats.totalToolCalls,
+        totalFilesTouched: stats.allFilesReferenced.length,
+        totalCostUSD: Math.round(stats.totalCostUSD * 1e6) / 1e6,
+        todaySessions: stats.todaySessions,
+        todayCostUSD: Math.round(stats.todayCostUSD * 1e6) / 1e6
+      },
+      recentSessions: recent.map(toSessionJson)
+    };
+    outputJson(data);
+    return;
+  }
   console.log();
-  if (isFirstRun) {
-    renderWelcome(stats);
-  } else {
-    renderBanner();
+  if (!isQuietMode()) {
+    if (isFirstRun) {
+      renderWelcome(stats);
+    } else {
+      renderBanner();
+    }
   }
   renderNarrativeStats(stats);
   renderSessionGroups(groups, stats);
-  renderNextSteps(stats, isFirstRun);
+  if (!isQuietMode()) {
+    renderNextSteps(stats, isFirstRun);
+  }
 }
 function renderWelcome(stats) {
   console.log(
@@ -717,25 +962,12 @@ function renderSessionCard(session, accentColor) {
   console.log(
     chalk2.dim("  ") + accentColor(timeStr.padEnd(16)) + chalk2.bold.white(session.projectName.padEnd(14)) + chalk2.white(preview)
   );
-  const parts = [];
   const turns = m.humanTurns + m.assistantTurns;
-  if (turns <= 4) {
-    parts.push(chalk2.dim("quick chat"));
-  } else if (turns <= 10) {
-    parts.push(chalk2.dim(`${turns} messages`));
-  } else {
-    parts.push(chalk2.white(`${turns} messages`));
-  }
-  if (m.toolCalls > 0) {
-    parts.push(chalk2.green(`ran ${m.toolCalls} commands`));
-  }
-  if (m.filesReferenced.length > 0) {
-    const fileWord = m.filesReferenced.length === 1 ? "file" : "files";
-    parts.push(chalk2.blue(`wrote ${m.filesReferenced.length} ${fileWord}`));
-  }
-  if (m.totalCostUSD > 0) {
-    parts.push(formatCost(m.totalCostUSD));
-  }
+  const parts = [];
+  parts.push(messageCountContext(turns));
+  if (m.toolCalls > 0) parts.push(toolCountContext(m.toolCalls));
+  if (m.filesReferenced.length > 0) parts.push(fileCountContext(m.filesReferenced.length));
+  if (m.totalCostUSD > 0) parts.push(costWithContext(m.totalCostUSD));
   if (m.errorCount > 0) {
     const errWord = m.errorCount === 1 ? "error" : "errors";
     parts.push(chalk2.red(`${m.errorCount} ${errWord}`));
@@ -752,13 +984,16 @@ function renderNextSteps(stats, isFirstRun) {
     console.log(chalk2.white("  What you can do next:"));
     console.log();
     console.log(
+      chalk2.cyan("  devlog today") + chalk2.dim("               What did I do today?")
+    );
+    console.log(
       chalk2.cyan("  devlog sessions") + chalk2.dim("            Browse all sessions by project")
     );
     console.log(
-      chalk2.cyan("  devlog sessions -p chat") + chalk2.dim("    Filter to a specific project")
+      chalk2.cyan("  devlog show <id>") + chalk2.dim("           View a full conversation")
     );
     console.log(
-      chalk2.cyan("  devlog show <id>") + chalk2.dim("           View a full conversation")
+      chalk2.cyan('  devlog search "auth"') + chalk2.dim("      Find a conversation")
     );
     console.log();
     console.log(
@@ -766,7 +1001,7 @@ function renderNextSteps(stats, isFirstRun) {
     );
   } else {
     console.log(
-      chalk2.dim("  ") + chalk2.cyan("devlog sessions") + chalk2.dim(" all sessions  \xB7  ") + chalk2.cyan("devlog show <id>") + chalk2.dim(" view conversation  \xB7  ") + chalk2.cyan("--help")
+      chalk2.dim("  ") + chalk2.cyan("devlog today") + chalk2.dim(" today  \xB7  ") + chalk2.cyan("devlog sessions") + chalk2.dim(" all  \xB7  ") + chalk2.cyan("devlog show <id>") + chalk2.dim(" view  \xB7  ") + chalk2.cyan("devlog search") + chalk2.dim(" find")
     );
   }
   console.log();
@@ -776,30 +1011,40 @@ function renderNextSteps(stats, isFirstRun) {
 import { existsSync as existsSync4 } from "fs";
 import chalk3 from "chalk";
 import ora2 from "ora";
-async function initCommand() {
-  console.log();
-  console.log(
-    chalk3.bold.cyan("  \u258C") + chalk3.bold.white(" DevLog Setup")
-  );
-  console.log();
-  if (isInitialized()) {
-    const config2 = loadConfig();
-    printSuccess("DevLog is already set up");
+async function initCommand(globalOpts) {
+  if (!isJsonMode()) {
+    console.log();
     console.log(
-      chalk3.dim("    Config: ") + chalk3.white(getDevlogDir() + "/config.toml")
-    );
-    console.log(
-      chalk3.dim("    Claude: ") + chalk3.white(config2.claudeDir)
+      chalk3.bold.cyan("  \u258C") + chalk3.bold.white(" DevLog Setup")
     );
     console.log();
-    const spinner2 = ora2({
-      text: chalk3.dim("  Checking your sessions..."),
-      spinner: "dots",
-      color: "cyan"
-    }).start();
+  }
+  if (isInitialized()) {
+    const config2 = loadConfig();
+    let spinner2 = null;
+    if (!isJsonMode() && !isQuietMode()) {
+      printSuccess("DevLog is already set up");
+      console.log(
+        chalk3.dim("    Config: ") + chalk3.white(getDevlogDir() + "/config.toml")
+      );
+      console.log(
+        chalk3.dim("    Claude: ") + chalk3.white(config2.claudeDir)
+      );
+      console.log();
+      spinner2 = ora2({
+        text: chalk3.dim("  Checking your sessions..."),
+        spinner: "dots",
+        color: "cyan",
+        stream: process.stderr
+      }).start();
+    }
     const projects2 = await discoverProjects(config2.claudeDir);
     const stats2 = computeStats(projects2);
-    spinner2.stop();
+    spinner2?.stop();
+    if (isJsonMode()) {
+      outputJson({ status: "already_initialized", configPath: getDevlogDir() + "/config.toml", stats: { totalProjects: stats2.totalProjects, totalSessions: stats2.totalSessions, totalMessages: stats2.totalMessages } });
+      return;
+    }
     renderStatsBox(stats2);
     console.log(
       chalk3.dim("  Everything looks good! Run ") + chalk3.cyan("devlog") + chalk3.dim(" to see your dashboard.")
@@ -809,6 +1054,10 @@ async function initCommand() {
   }
   const claudeDir = getClaudeProjectsDir();
   if (!existsSync4(claudeDir)) {
+    if (isJsonMode()) {
+      outputJson({ error: "Claude Code not found", path: claudeDir });
+      process.exit(1);
+    }
     printError("Claude Code not found");
     console.log();
     console.log(
@@ -828,17 +1077,29 @@ async function initCommand() {
     console.log();
     return;
   }
-  printSuccess("Found Claude Code");
+  if (!isJsonMode()) {
+    printSuccess("Found Claude Code");
+  }
   const config = initConfig();
-  printSuccess("Created config at " + chalk3.dim("~/.devlog/"));
-  const spinner = ora2({
-    text: chalk3.dim("  Scanning your Claude Code history..."),
-    spinner: "dots",
-    color: "cyan"
-  }).start();
+  if (!isJsonMode()) {
+    printSuccess("Created config at " + chalk3.dim("~/.devlog/"));
+  }
+  let spinner = null;
+  if (!isJsonMode() && !isQuietMode()) {
+    spinner = ora2({
+      text: chalk3.dim("  Scanning your Claude Code history..."),
+      spinner: "dots",
+      color: "cyan",
+      stream: process.stderr
+    }).start();
+  }
   const projects = await discoverProjects(config.claudeDir);
   const stats = computeStats(projects);
-  spinner.stop();
+  spinner?.stop();
+  if (isJsonMode()) {
+    outputJson({ status: "initialized", configPath: getDevlogDir() + "/config.toml", stats: { totalProjects: stats.totalProjects, totalSessions: stats.totalSessions, totalMessages: stats.totalMessages } });
+    return;
+  }
   printSuccess("Scan complete");
   console.log();
   renderStatsBox(stats);
@@ -853,6 +1114,7 @@ function renderStatsBox(stats) {
     const padding = w - label.length - value.length - 6;
     return chalk3.dim("  \u2502 ") + chalk3.white(label) + " ".repeat(Math.max(1, padding)) + chalk3.cyan.bold(value) + chalk3.dim(" \u2502");
   };
+  const costStr = stats.totalCostUSD > 0 ? stats.totalCostUSD < 1 ? `$${stats.totalCostUSD.toFixed(3)}` : `$${stats.totalCostUSD.toFixed(2)}` : "";
   console.log(chalk3.dim("  \u250C" + "\u2500".repeat(w) + "\u2510"));
   console.log(line("Projects", formatNumber(stats.totalProjects)));
   console.log(line("Conversations", formatNumber(stats.totalSessions)));
@@ -861,8 +1123,8 @@ function renderStatsBox(stats) {
   console.log(
     line("Files touched", formatNumber(stats.allFilesReferenced.length))
   );
-  if (stats.totalCostUSD > 0) {
-    console.log(line("Total cost", `$${stats.totalCostUSD.toFixed(3)}`));
+  if (costStr) {
+    console.log(line("Total cost", costStr));
   }
   console.log(chalk3.dim("  \u2514" + "\u2500".repeat(w) + "\u2518"));
   console.log();
@@ -871,18 +1133,26 @@ function renderStatsBox(stats) {
 // src/commands/sessions.ts
 import chalk4 from "chalk";
 import ora3 from "ora";
-async function sessionsCommand(options) {
-  const { config } = ensureInit();
+async function sessionsCommand(options, globalOpts) {
+  const { config, isFirstRun } = ensureInit();
   const limit = options.all ? Infinity : parseInt(options.limit || "30", 10);
-  const spinner = ora3({
-    text: chalk4.dim("  Scanning sessions..."),
-    spinner: "dots",
-    color: "cyan"
-  }).start();
+  let spinner = null;
+  if (!isJsonMode() && !isQuietMode()) {
+    spinner = ora3({
+      text: chalk4.dim("  Scanning sessions..."),
+      spinner: "dots",
+      color: "cyan",
+      stream: process.stderr
+    }).start();
+  }
   const projects = await discoverProjects(config.claudeDir);
   const stats = computeStats(projects);
-  spinner.stop();
+  spinner?.stop();
   if (projects.length === 0) {
+    if (isJsonMode()) {
+      outputJson({ projects: [] });
+      return;
+    }
     console.log();
     console.log(chalk4.white("  No sessions found yet."));
     console.log(
@@ -894,6 +1164,18 @@ async function sessionsCommand(options) {
   const filteredProjects = options.project ? projects.filter(
     (p) => p.name.toLowerCase().includes(options.project.toLowerCase()) || p.path.toLowerCase().includes(options.project.toLowerCase())
   ) : projects;
+  if (isJsonMode()) {
+    const data = {
+      projects: filteredProjects.map((p) => ({
+        name: p.name,
+        path: p.path,
+        sessionCount: p.sessionCount,
+        sessions: p.sessions.map(toSessionJson)
+      }))
+    };
+    outputJson(data);
+    return;
+  }
   if (filteredProjects.length === 0) {
     console.log();
     console.log(
@@ -923,6 +1205,15 @@ async function sessionsCommand(options) {
     )
   );
   console.log();
+  if (isFirstRun) {
+    console.log(
+      chalk4.dim("  Each project shows your Claude conversations, newest first.")
+    );
+    console.log(
+      chalk4.dim("  Pick one with ") + chalk4.cyan("devlog show <number>") + chalk4.dim(" to see the full chat.")
+    );
+    console.log();
+  }
   let displayedCount = 0;
   let sessionIndex = 0;
   for (const project of filteredProjects) {
@@ -962,23 +1253,12 @@ function renderSessionRow(session, index) {
   console.log(
     chalk4.dim("   ") + indexStr + chalk4.white(time.padEnd(16)) + chalk4.white(preview)
   );
-  const parts = [];
   const turns = m.humanTurns + m.assistantTurns;
-  if (turns <= 4) {
-    parts.push(chalk4.dim("quick chat"));
-  } else {
-    parts.push(chalk4.dim(`${turns} messages`));
-  }
-  if (m.toolCalls > 0) {
-    parts.push(chalk4.green(`ran ${m.toolCalls} commands`));
-  }
-  if (m.filesReferenced.length > 0) {
-    const fileWord = m.filesReferenced.length === 1 ? "file" : "files";
-    parts.push(chalk4.blue(`wrote ${m.filesReferenced.length} ${fileWord}`));
-  }
-  if (m.totalCostUSD > 0) {
-    parts.push(formatCost(m.totalCostUSD));
-  }
+  const parts = [];
+  parts.push(messageCountContext(turns));
+  if (m.toolCalls > 0) parts.push(toolCountContext(m.toolCalls));
+  if (m.filesReferenced.length > 0) parts.push(fileCountContext(m.filesReferenced.length));
+  if (m.totalCostUSD > 0) parts.push(costWithContext(m.totalCostUSD));
   if (m.errorCount > 0) {
     parts.push(chalk4.red(`${m.errorCount} error${m.errorCount === 1 ? "" : "s"}`));
   }
@@ -991,22 +1271,30 @@ function renderSessionRow(session, index) {
 // src/commands/show.ts
 import chalk5 from "chalk";
 import ora4 from "ora";
-async function showCommand(sessionRef, options) {
+async function showCommand(sessionRef, options, globalOpts) {
   const { config } = ensureInit();
   const limit = parseInt(options.limit || "50", 10);
-  const spinner = ora4({
-    text: chalk5.dim("  Finding session..."),
-    spinner: "dots",
-    color: "cyan"
-  }).start();
+  let spinner = null;
+  if (!isJsonMode() && !isQuietMode()) {
+    spinner = ora4({
+      text: chalk5.dim("  Finding session..."),
+      spinner: "dots",
+      color: "cyan",
+      stream: process.stderr
+    }).start();
+  }
   const projects = await discoverProjects(config.claudeDir);
-  spinner.stop();
+  spinner?.stop();
   const allSessions = [];
   for (const project of projects) {
     allSessions.push(...project.sessions);
   }
   allSessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
   if (allSessions.length === 0) {
+    if (isJsonMode()) {
+      outputJson({ error: "No sessions found" });
+      process.exit(1);
+    }
     console.log();
     console.log(chalk5.yellow("  No sessions found."));
     console.log();
@@ -1021,8 +1309,17 @@ async function showCommand(sessionRef, options) {
     session = allSessions.find(
       (s) => s.id.toLowerCase().startsWith(ref)
     );
+    if (!session) {
+      session = allSessions.find(
+        (s) => s.id.toLowerCase().includes(ref)
+      );
+    }
   }
   if (!session) {
+    if (isJsonMode()) {
+      outputJson({ error: `No session matching: ${sessionRef}` });
+      process.exit(1);
+    }
     console.log();
     console.log(
       chalk5.yellow("  Couldn't find a session matching: ") + chalk5.white(sessionRef)
@@ -1041,18 +1338,45 @@ async function showCommand(sessionRef, options) {
       chalk5.dim("  Use ") + chalk5.cyan("devlog show 1") + chalk5.dim(" to view the most recent session.")
     );
     console.log();
+    process.exit(1);
+  }
+  let parseSpinner = null;
+  if (!isJsonMode() && !isQuietMode()) {
+    parseSpinner = ora4({
+      text: chalk5.dim("  Reading conversation..."),
+      spinner: "dots",
+      color: "cyan",
+      stream: process.stderr
+    }).start();
+  }
+  const events = await parseSessionFile(session.filePath, session.id);
+  parseSpinner?.stop();
+  if (isJsonMode()) {
+    const data = {
+      session: {
+        id: session.id,
+        projectName: session.projectName,
+        meta: session.meta
+      },
+      events: events.map((e) => ({
+        timestamp: e.timestamp.toISOString(),
+        role: e.role,
+        type: e.type,
+        content: e.content,
+        ...e.toolName ? { toolName: e.toolName } : {},
+        ...e.isError ? { isError: e.isError } : {}
+      }))
+    };
+    outputJson(data);
     return;
   }
-  const parseSpinner = ora4({
-    text: chalk5.dim("  Reading conversation..."),
-    spinner: "dots",
-    color: "cyan"
-  }).start();
-  const events = await parseSessionFile(session.filePath, session.id);
-  parseSpinner.stop();
-  renderSessionHeader(session);
-  renderConversation(events, limit);
-  renderSessionFooter(session, events, limit);
+  if (options.summary) {
+    renderSummary(session, events);
+  } else {
+    renderSessionHeader(session);
+    renderConversation(events, limit);
+    renderSessionFooter(session, events, limit);
+  }
 }
 function renderSessionHeader(session) {
   const m = session.meta;
@@ -1061,33 +1385,65 @@ function renderSessionHeader(session) {
     chalk5.bold.cyan("  \u258C") + chalk5.bold.white(` ${session.projectName}`) + chalk5.dim("  \xB7  ") + chalk5.dim(formatSmartTime(session.updatedAt))
   );
   console.log();
-  const parts = [];
   const turns = m.humanTurns + m.assistantTurns;
-  parts.push(`${turns} messages`);
-  if (m.toolCalls > 0) {
-    parts.push(`${m.toolCalls} commands run`);
-  }
-  if (m.filesReferenced.length > 0) {
-    parts.push(`${m.filesReferenced.length} files touched`);
-  }
-  if (m.totalCostUSD > 0) {
-    parts.push(`$${m.totalCostUSD.toFixed(3)} cost`);
-  }
-  console.log(chalk5.dim("  " + parts.join("  \xB7  ")));
+  const parts = [];
+  parts.push(messageCountContext(turns));
+  if (m.toolCalls > 0) parts.push(toolCountContext(m.toolCalls));
+  if (m.filesReferenced.length > 0) parts.push(fileCountContext(m.filesReferenced.length));
+  if (m.totalCostUSD > 0) parts.push(costWithContext(m.totalCostUSD));
+  console.log(chalk5.dim("  ") + parts.join(chalk5.dim("  \xB7  ")));
   if (m.uniqueTools.length > 0) {
     console.log(
-      chalk5.dim("  Tools: ") + m.uniqueTools.map((t) => chalk5.green(t)).join(chalk5.dim(", "))
+      chalk5.dim("  ") + humanizeToolSummary(m.uniqueTools)
     );
   }
   console.log();
   console.log(chalk5.dim("  " + "\u2500".repeat(60)));
   console.log();
 }
+function formatToolLine(event) {
+  const name = event.toolName || "tool";
+  const input = event.toolInput || {};
+  if (name === "Read" && input.file_path) return `read ${input.file_path}`;
+  if (name === "Write" && input.file_path) return `wrote ${input.file_path}`;
+  if (name === "Edit" && input.file_path) return `edited ${input.file_path}`;
+  if (name === "Bash" && input.command) return `ran: ${truncate(String(input.command), 60)}`;
+  if (name === "Grep" && input.pattern) return `searched for "${truncate(String(input.pattern), 40)}"`;
+  if (name === "Glob" && input.pattern) return `found files matching ${truncate(String(input.pattern), 40)}`;
+  return name.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+}
+function flushToolGroup(group) {
+  if (group.length === 0) return;
+  const firstName = group[0].toolName || "tool";
+  const allSame = group.every((e) => e.toolName === firstName);
+  if (allSame && group.length > 2 && (firstName === "Read" || firstName === "Write" || firstName === "Edit")) {
+    const verb = firstName === "Read" ? "read" : firstName === "Write" ? "wrote" : "edited";
+    const files = group.map((e) => {
+      const p = String(e.toolInput?.file_path || "");
+      return p.split("/").pop() || p;
+    }).filter(Boolean);
+    const fileWord = group.length === 1 ? "file" : "files";
+    console.log(
+      chalk5.green("  \u25B8 ") + chalk5.dim(`${verb} ${group.length} ${fileWord}: ${truncate(files.join(", "), 60)}`)
+    );
+  } else {
+    for (const event of group) {
+      console.log(
+        chalk5.green("  \u25B8 ") + chalk5.dim(formatToolLine(event))
+      );
+    }
+  }
+}
 function renderConversation(events, limit) {
   let shown = 0;
+  let toolGroup = [];
   for (const event of events) {
     if (shown >= limit) break;
-    if (event.role === "human" && event.type === "text") {
+    if (event.role !== "tool_use" && event.role !== "tool_result" && toolGroup.length > 0) {
+      flushToolGroup(toolGroup);
+      toolGroup = [];
+    }
+    if (event.role === "human" && (event.type === "text" || event.type === "message")) {
       console.log(
         chalk5.blue.bold("  You: ") + chalk5.white(truncate(event.content.trim(), 76))
       );
@@ -1106,29 +1462,23 @@ function renderConversation(events, limit) {
       console.log();
       shown++;
     } else if (event.role === "tool_use") {
-      console.log(
-        chalk5.green("  \u26A1 ") + chalk5.green(event.toolName || "tool") + chalk5.dim("  ") + chalk5.dim(truncate(event.content.replace(event.toolName + "(", "").replace(/\)$/, ""), 60))
-      );
+      toolGroup.push(event);
       shown++;
     } else if (event.role === "tool_result") {
       if (event.isError) {
         console.log(
           chalk5.red("  \u2717 Error: ") + chalk5.dim(truncate(event.content, 60))
         );
-      } else {
-        const resultPreview = event.content.trim();
-        if (resultPreview.length > 0 && resultPreview.length < 80) {
-          console.log(
-            chalk5.dim("    \u2192 ") + chalk5.dim(truncate(resultPreview, 70))
-          );
-        }
       }
     }
+  }
+  if (toolGroup.length > 0) {
+    flushToolGroup(toolGroup);
   }
 }
 function renderSessionFooter(session, events, limit) {
   const totalEvents = events.filter(
-    (e) => e.role === "human" && e.type === "text" || e.role === "assistant" && e.type === "text" || e.role === "tool_use"
+    (e) => e.role === "human" && (e.type === "text" || e.type === "message") || e.role === "assistant" && e.type === "text" || e.role === "tool_use"
   ).length;
   console.log();
   console.log(chalk5.dim("  " + "\u2500".repeat(60)));
@@ -1137,73 +1487,712 @@ function renderSessionFooter(session, events, limit) {
       chalk5.dim(`  Showing ${limit} of ${totalEvents} events. Use `) + chalk5.cyan(`devlog show ${session.id.slice(0, 8)} -n ${totalEvents}`) + chalk5.dim(" to see all.")
     );
   }
+  console.log();
   console.log(
-    chalk5.dim("  Session ID: ") + chalk5.dim(session.id)
+    chalk5.dim("  ") + chalk5.cyan(`devlog sessions -p ${session.projectName}`) + chalk5.dim("  other sessions in this project")
+  );
+  console.log(
+    chalk5.dim("  ") + chalk5.cyan("devlog") + chalk5.dim("                          back to dashboard")
+  );
+  console.log();
+}
+function renderSummary(session, events) {
+  const m = session.meta;
+  console.log();
+  console.log(
+    chalk5.bold.cyan("  \u258C") + chalk5.bold.white(` ${session.projectName}`) + chalk5.dim("  \xB7  ") + chalk5.dim(formatSmartTime(session.updatedAt))
+  );
+  console.log();
+  const firstMsg = m.firstUserMessage ? truncate(m.firstUserMessage.replace(/\n/g, " ").trim(), 70) : "(empty)";
+  console.log(chalk5.white("  Summary:"));
+  console.log(
+    chalk5.dim("  You asked Claude: ") + chalk5.white(`"${firstMsg}"`)
+  );
+  console.log();
+  const toolGroups = /* @__PURE__ */ new Map();
+  const filesChanged = /* @__PURE__ */ new Set();
+  const commandsRun = [];
+  let errorCount = 0;
+  for (const event of events) {
+    if (event.role === "tool_use") {
+      const name = event.toolName || "tool";
+      toolGroups.set(name, (toolGroups.get(name) || 0) + 1);
+      const input = event.toolInput || {};
+      if (input.file_path && (name === "Write" || name === "Edit")) {
+        filesChanged.add(String(input.file_path));
+      }
+      if (name === "Bash" && input.command) {
+        commandsRun.push(truncate(String(input.command), 50));
+      }
+    }
+    if (event.role === "tool_result" && event.isError) {
+      errorCount++;
+    }
+  }
+  console.log(chalk5.white("  What happened:"));
+  for (const [name, count] of toolGroups) {
+    let desc;
+    if (name === "Read") desc = `Read ${count} file${count === 1 ? "" : "s"} to understand the codebase`;
+    else if (name === "Write") desc = `Created ${count} file${count === 1 ? "" : "s"}`;
+    else if (name === "Edit") desc = `Edited ${count} file${count === 1 ? "" : "s"}`;
+    else if (name === "Bash") desc = `Ran ${count} command${count === 1 ? "" : "s"}` + (commandsRun.length > 0 ? ` (${truncate(commandsRun.slice(0, 3).join(", "), 40)})` : "");
+    else if (name === "Grep") desc = `Searched code ${count} time${count === 1 ? "" : "s"}`;
+    else if (name === "Glob") desc = `Searched for files ${count} time${count === 1 ? "" : "s"}`;
+    else desc = `${name} \xD7${count}`;
+    console.log(chalk5.dim("  - ") + chalk5.dim(desc));
+  }
+  if (filesChanged.size > 0) {
+    const fileNames = [...filesChanged].map((f) => f.split("/").pop() || f);
+    console.log(
+      chalk5.dim("  - ") + chalk5.dim(`Files changed: ${truncate(fileNames.join(", "), 50)}`)
+    );
+  }
+  if (errorCount > 0) {
+    console.log(
+      chalk5.dim("  - ") + chalk5.red(`Fixed ${errorCount} error${errorCount === 1 ? "" : "s"}`)
+    );
+  }
+  console.log();
+  const turns = m.humanTurns + m.assistantTurns;
+  const parts = [];
+  parts.push(messageCountContext(turns));
+  if (m.toolCalls > 0) parts.push(toolCountContext(m.toolCalls));
+  if (m.filesReferenced.length > 0) parts.push(fileCountContext(m.filesReferenced.length));
+  if (m.totalCostUSD > 0) parts.push(costWithContext(m.totalCostUSD));
+  console.log(chalk5.dim("  ") + parts.join(chalk5.dim("  \xB7  ")));
+  console.log();
+  console.log(chalk5.dim("  " + "\u2500".repeat(60)));
+  console.log();
+  console.log(
+    chalk5.dim("  ") + chalk5.cyan(`devlog show ${session.id.slice(0, 8)}`) + chalk5.dim(" see full conversation  \xB7  ") + chalk5.cyan(`devlog sessions -p ${session.projectName}`) + chalk5.dim(" other sessions")
+  );
+  console.log();
+}
+
+// src/commands/today.ts
+import chalk6 from "chalk";
+import ora5 from "ora";
+import dayjs3 from "dayjs";
+import isToday2 from "dayjs/plugin/isToday.js";
+dayjs3.extend(isToday2);
+async function todayCommand(globalOpts) {
+  const { config } = ensureInit();
+  let spinner = null;
+  if (!isJsonMode() && !isQuietMode()) {
+    spinner = ora5({
+      text: chalk6.dim("  Checking today's sessions..."),
+      spinner: "dots",
+      color: "cyan",
+      stream: process.stderr
+    }).start();
+  }
+  const projects = await discoverProjects(config.claudeDir);
+  spinner?.stop();
+  const todaySessions = [];
+  const projectNames = /* @__PURE__ */ new Set();
+  for (const project of projects) {
+    for (const session of project.sessions) {
+      if (dayjs3(session.updatedAt).isToday()) {
+        todaySessions.push(session);
+        projectNames.add(session.projectName);
+      }
+    }
+  }
+  todaySessions.sort((a, b) => a.updatedAt.getTime() - b.updatedAt.getTime());
+  if (isJsonMode()) {
+    const totalCost2 = todaySessions.reduce((s, sess) => s + sess.meta.totalCostUSD, 0);
+    const totalTools2 = todaySessions.reduce((s, sess) => s + sess.meta.toolCalls, 0);
+    const allFiles2 = /* @__PURE__ */ new Set();
+    for (const s of todaySessions) {
+      for (const f of s.meta.filesReferenced) allFiles2.add(f);
+    }
+    outputJson({
+      date: dayjs3().format("YYYY-MM-DD"),
+      sessionCount: todaySessions.length,
+      projectCount: projectNames.size,
+      totalCostUSD: Math.round(totalCost2 * 1e6) / 1e6,
+      totalToolCalls: totalTools2,
+      totalFilesTouched: allFiles2.size,
+      sessions: todaySessions.map(toSessionJson)
+    });
+    return;
+  }
+  if (todaySessions.length === 0) {
+    console.log();
+    console.log(
+      chalk6.bold.cyan("  \u258C") + chalk6.bold.white(" Your day so far")
+    );
+    console.log();
+    console.log(chalk6.dim("  No sessions yet today."));
+    const allSessions = [];
+    for (const p of projects) allSessions.push(...p.sessions);
+    allSessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    if (allSessions.length > 0) {
+      const last = allSessions[0];
+      console.log(
+        chalk6.dim("  Your last session was ") + chalk6.white(formatSmartTime(last.updatedAt)) + chalk6.dim(" in ") + chalk6.cyan(last.projectName)
+      );
+    }
+    console.log();
+    console.log(
+      chalk6.dim("  ") + chalk6.cyan("devlog sessions") + chalk6.dim(" browse all  \xB7  ") + chalk6.cyan("devlog") + chalk6.dim(" dashboard")
+    );
+    console.log();
+    return;
+  }
+  const totalCost = todaySessions.reduce((s, sess) => s + sess.meta.totalCostUSD, 0);
+  const totalTools = todaySessions.reduce((s, sess) => s + sess.meta.toolCalls, 0);
+  const allFiles = /* @__PURE__ */ new Set();
+  for (const s of todaySessions) {
+    for (const f of s.meta.filesReferenced) allFiles.add(f);
+  }
+  const sessionWord = todaySessions.length === 1 ? "conversation" : "conversations";
+  const projectWord = projectNames.size === 1 ? "project" : "projects";
+  console.log();
+  console.log(
+    chalk6.bold.cyan("  \u258C") + chalk6.bold.white(" Your day so far")
+  );
+  console.log();
+  console.log(
+    chalk6.dim("  ") + chalk6.white(`${todaySessions.length} ${sessionWord} across ${projectNames.size} ${projectWord}.`)
+  );
+  const summaryParts = [];
+  if (totalTools > 0) summaryParts.push(toolCountContext(totalTools));
+  if (allFiles.size > 0) summaryParts.push(fileCountContext(allFiles.size));
+  if (summaryParts.length > 0) {
+    console.log(chalk6.dim("  ") + chalk6.white("Claude ") + summaryParts.join(chalk6.dim(" and ")));
+  }
+  if (totalCost > 0) {
+    console.log(chalk6.dim("  Cost: ") + costWithContext(totalCost));
+  }
+  console.log();
+  console.log(chalk6.dim("  " + "\u2500".repeat(60)));
+  console.log();
+  for (const session of todaySessions) {
+    const m = session.meta;
+    const time = formatSmartTime(session.updatedAt);
+    const preview = m.firstUserMessage ? truncate(m.firstUserMessage.replace(/\n/g, " ").trim(), 42) : chalk6.dim("(empty)");
+    console.log(
+      chalk6.dim("  ") + chalk6.white(time.padEnd(12)) + chalk6.cyan(session.projectName.padEnd(14)) + chalk6.white(`"${preview}"`)
+    );
+    const turns = m.humanTurns + m.assistantTurns;
+    const parts = [];
+    parts.push(messageCountContext(turns));
+    if (m.toolCalls > 0) parts.push(toolCountContext(m.toolCalls));
+    if (m.totalCostUSD > 0) parts.push(costWithContext(m.totalCostUSD));
+    console.log(
+      chalk6.dim("  ") + " ".repeat(26) + parts.join(chalk6.dim("  \xB7  "))
+    );
+    console.log();
+  }
+  console.log(chalk6.dim("  " + "\u2500".repeat(60)));
+  console.log();
+  console.log(
+    chalk6.dim("  ") + chalk6.cyan("devlog show 1") + chalk6.dim(" view most recent  \xB7  ") + chalk6.cyan("devlog sessions") + chalk6.dim(" browse all")
+  );
+  console.log();
+}
+
+// src/commands/search.ts
+import chalk7 from "chalk";
+import ora6 from "ora";
+async function searchCommand(query, globalOpts) {
+  const { config } = ensureInit();
+  let spinner = null;
+  if (!isJsonMode() && !isQuietMode()) {
+    spinner = ora6({
+      text: chalk7.dim("  Searching sessions..."),
+      spinner: "dots",
+      color: "cyan",
+      stream: process.stderr
+    }).start();
+  }
+  const projects = await discoverProjects(config.claudeDir);
+  spinner?.stop();
+  const q = query.toLowerCase();
+  const matches = [];
+  for (const project of projects) {
+    for (const session of project.sessions) {
+      const m = session.meta;
+      if (session.projectName.toLowerCase().includes(q) || m.firstUserMessage.toLowerCase().includes(q) || m.uniqueTools.some((t) => t.toLowerCase().includes(q))) {
+        matches.push(session);
+      }
+    }
+  }
+  matches.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+  if (isJsonMode()) {
+    outputJson({
+      query,
+      matchCount: matches.length,
+      sessions: matches.map(toSessionJson)
+    });
+    return;
+  }
+  console.log();
+  console.log(
+    chalk7.bold.cyan("  \u258C") + chalk7.bold.white(` Search: `) + chalk7.white(`"${query}"`)
+  );
+  console.log();
+  if (matches.length === 0) {
+    console.log(chalk7.dim("  No conversations found matching that query."));
+    console.log();
+    console.log(
+      chalk7.dim("  Try a shorter term, or use ") + chalk7.cyan("devlog sessions") + chalk7.dim(" to browse all.")
+    );
+    console.log();
+    return;
+  }
+  const matchWord = matches.length === 1 ? "conversation" : "conversations";
+  console.log(
+    chalk7.dim(`  Found ${matches.length} ${matchWord} matching "${query}"`)
+  );
+  console.log();
+  const shown = matches.slice(0, 20);
+  for (let i = 0; i < shown.length; i++) {
+    const session = shown[i];
+    const m = session.meta;
+    const time = formatSmartTime(session.updatedAt);
+    const preview = m.firstUserMessage ? truncate(m.firstUserMessage.replace(/\n/g, " ").trim(), 42) : chalk7.dim("(empty)");
+    console.log(
+      chalk7.dim(`  ${(i + 1).toString().padEnd(3)} `) + chalk7.white(time.padEnd(16)) + chalk7.cyan(session.projectName.padEnd(14)) + chalk7.white(`"${preview}"`)
+    );
+    const turns = m.humanTurns + m.assistantTurns;
+    const parts = [];
+    parts.push(messageCountContext(turns));
+    if (m.totalCostUSD > 0) parts.push(costWithContext(m.totalCostUSD));
+    console.log(
+      chalk7.dim("  ") + "    " + " ".repeat(16) + parts.join(chalk7.dim("  \xB7  "))
+    );
+    console.log();
+  }
+  if (matches.length > 20) {
+    console.log(chalk7.dim(`  + ${matches.length - 20} more matches`));
+    console.log();
+  }
+  console.log(chalk7.dim("  " + "\u2500".repeat(60)));
+  console.log();
+  console.log(
+    chalk7.dim("  ") + chalk7.cyan("devlog show 1") + chalk7.dim(" view match  \xB7  ") + chalk7.cyan(`devlog search "${query} ..."`) + chalk7.dim(" refine")
+  );
+  console.log();
+}
+
+// src/commands/stats.ts
+import chalk8 from "chalk";
+import ora7 from "ora";
+import dayjs4 from "dayjs";
+import isToday3 from "dayjs/plugin/isToday.js";
+dayjs4.extend(isToday3);
+function filterByPeriod(sessions, period) {
+  const now = dayjs4();
+  return sessions.filter((s) => {
+    const d = dayjs4(s.updatedAt);
+    switch (period) {
+      case "today":
+        return d.isToday();
+      case "week":
+        return now.diff(d, "day") < 7;
+      case "month":
+        return now.diff(d, "day") < 30;
+      default:
+        return true;
+    }
+  });
+}
+async function statsCommand(options, globalOpts) {
+  const { config } = ensureInit();
+  const period = options.period || "all";
+  let spinner = null;
+  if (!isJsonMode() && !isQuietMode()) {
+    spinner = ora7({
+      text: chalk8.dim("  Crunching numbers..."),
+      spinner: "dots",
+      color: "cyan",
+      stream: process.stderr
+    }).start();
+  }
+  const projects = await discoverProjects(config.claudeDir);
+  spinner?.stop();
+  const allSessions = [];
+  for (const p of projects) allSessions.push(...p.sessions);
+  const filtered = filterByPeriod(allSessions, period);
+  let totalCost = 0;
+  let totalTools = 0;
+  let totalMessages = 0;
+  const fileSet = /* @__PURE__ */ new Set();
+  const toolCounts = /* @__PURE__ */ new Map();
+  const projectCounts = /* @__PURE__ */ new Map();
+  const costByModel = {};
+  for (const s of filtered) {
+    totalCost += s.meta.totalCostUSD;
+    totalTools += s.meta.toolCalls;
+    totalMessages += s.meta.humanTurns + s.meta.assistantTurns;
+    for (const f of s.meta.filesReferenced) fileSet.add(f);
+    for (const t of s.meta.uniqueTools) {
+      toolCounts.set(t, (toolCounts.get(t) || 0) + 1);
+    }
+    projectCounts.set(
+      s.projectName,
+      (projectCounts.get(s.projectName) || 0) + 1
+    );
+    for (const [model, cost] of Object.entries(s.meta.costByModel)) {
+      costByModel[model] = (costByModel[model] || 0) + cost;
+    }
+  }
+  const periodLabel = period === "today" ? "Today" : period === "week" ? "This Week" : period === "month" ? "This Month" : "All Time";
+  if (isJsonMode()) {
+    outputJson({
+      period: periodLabel,
+      sessionCount: filtered.length,
+      totalMessages,
+      totalToolCalls: totalTools,
+      totalFilesTouched: fileSet.size,
+      totalCostUSD: Math.round(totalCost * 1e6) / 1e6,
+      topTools: [...toolCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([name, count]) => ({ name, count })),
+      projectBreakdown: [...projectCounts.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, sessions: count })),
+      costByModel
+    });
+    return;
+  }
+  if (filtered.length === 0) {
+    console.log();
+    console.log(
+      chalk8.bold.cyan("  \u258C") + chalk8.bold.white(` Stats \u2014 ${periodLabel}`)
+    );
+    console.log();
+    console.log(chalk8.dim("  No sessions in this period."));
+    console.log();
+    return;
+  }
+  console.log();
+  console.log(
+    chalk8.bold.cyan("  \u258C") + chalk8.bold.white(` Stats \u2014 ${periodLabel}`)
+  );
+  console.log();
+  const w = 42;
+  const line = (label, value) => {
+    const padding = w - label.length - value.length - 6;
+    return chalk8.dim("  \u2502 ") + chalk8.white(label) + " ".repeat(Math.max(1, padding)) + chalk8.cyan.bold(value) + chalk8.dim(" \u2502");
+  };
+  console.log(chalk8.dim("  \u250C" + "\u2500".repeat(w) + "\u2510"));
+  console.log(line("Sessions", formatNumber(filtered.length)));
+  console.log(line("Messages", formatNumber(totalMessages)));
+  console.log(line("Commands run", formatNumber(totalTools)));
+  console.log(line("Files touched", formatNumber(fileSet.size)));
+  if (totalCost > 0) {
+    const costStr = totalCost < 1 ? `$${totalCost.toFixed(3)}` : `$${totalCost.toFixed(2)}`;
+    console.log(line("Total cost", costStr));
+  }
+  console.log(chalk8.dim("  \u2514" + "\u2500".repeat(w) + "\u2518"));
+  console.log();
+  const topTools = [...toolCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  if (topTools.length > 0) {
+    console.log(chalk8.white("  Most used tools:"));
+    for (const [name, count] of topTools) {
+      console.log(
+        chalk8.dim("    ") + chalk8.green(name.padEnd(16)) + chalk8.dim(`used in ${count} session${count === 1 ? "" : "s"}`)
+      );
+    }
+    console.log();
+  }
+  const topProjects = [...projectCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  if (topProjects.length > 0) {
+    console.log(chalk8.white("  Most active projects:"));
+    for (const [name, count] of topProjects) {
+      const sessionWord = count === 1 ? "session" : "sessions";
+      console.log(
+        chalk8.dim("    ") + chalk8.cyan(name.padEnd(16)) + chalk8.dim(`${count} ${sessionWord}`)
+      );
+    }
+    console.log();
+  }
+  if (totalCost > 0) {
+    console.log(
+      chalk8.dim("  Total cost: ") + costWithContext(totalCost)
+    );
+    console.log();
+  }
+  console.log(chalk8.dim("  " + "\u2500".repeat(60)));
+  console.log();
+  console.log(
+    chalk8.dim("  ") + chalk8.cyan("devlog cost") + chalk8.dim(" cost breakdown  \xB7  ") + chalk8.cyan("devlog stats --period week") + chalk8.dim(" filter")
+  );
+  console.log();
+}
+
+// src/commands/cost.ts
+import chalk9 from "chalk";
+import ora8 from "ora";
+import dayjs5 from "dayjs";
+import isToday4 from "dayjs/plugin/isToday.js";
+dayjs5.extend(isToday4);
+function filterByPeriod2(sessions, period) {
+  const now = dayjs5();
+  return sessions.filter((s) => {
+    const d = dayjs5(s.updatedAt);
+    switch (period) {
+      case "today":
+        return d.isToday();
+      case "week":
+        return now.diff(d, "day") < 7;
+      case "month":
+        return now.diff(d, "day") < 30;
+      default:
+        return true;
+    }
+  });
+}
+function renderBar(fraction, width = 16) {
+  const filled = Math.round(fraction * width);
+  return chalk9.green("\u2588".repeat(filled)) + chalk9.dim("\u2591".repeat(width - filled));
+}
+async function costCommand(options, globalOpts) {
+  const { config } = ensureInit();
+  const period = options.period || "all";
+  let spinner = null;
+  if (!isJsonMode() && !isQuietMode()) {
+    spinner = ora8({
+      text: chalk9.dim("  Calculating costs..."),
+      spinner: "dots",
+      color: "cyan",
+      stream: process.stderr
+    }).start();
+  }
+  const projects = await discoverProjects(config.claudeDir);
+  spinner?.stop();
+  const allSessions = [];
+  for (const p of projects) allSessions.push(...p.sessions);
+  const filtered = filterByPeriod2(allSessions, period);
+  const byProject = /* @__PURE__ */ new Map();
+  const byModel = /* @__PURE__ */ new Map();
+  let totalCost = 0;
+  for (const s of filtered) {
+    totalCost += s.meta.totalCostUSD;
+    byProject.set(
+      s.projectName,
+      (byProject.get(s.projectName) || 0) + s.meta.totalCostUSD
+    );
+    for (const [model, cost] of Object.entries(s.meta.costByModel)) {
+      byModel.set(model, (byModel.get(model) || 0) + cost);
+    }
+  }
+  const periodLabel = period === "today" ? "Today" : period === "week" ? "This Week" : period === "month" ? "This Month" : "All Time";
+  if (isJsonMode()) {
+    outputJson({
+      period: periodLabel,
+      totalCostUSD: Math.round(totalCost * 1e6) / 1e6,
+      byProject: [...byProject.entries()].sort((a, b) => b[1] - a[1]).map(([name, cost]) => ({ name, costUSD: Math.round(cost * 1e6) / 1e6 })),
+      byModel: [...byModel.entries()].sort((a, b) => b[1] - a[1]).map(([name, cost]) => ({ name, costUSD: Math.round(cost * 1e6) / 1e6 }))
+    });
+    return;
+  }
+  console.log();
+  console.log(
+    chalk9.bold.cyan("  \u258C") + chalk9.bold.white(` Cost Breakdown \u2014 ${periodLabel}`)
+  );
+  console.log();
+  if (totalCost === 0) {
+    console.log(chalk9.dim("  No costs recorded in this period."));
+    console.log();
+    return;
+  }
+  console.log(
+    chalk9.dim("  Total: ") + costWithContext(totalCost)
+  );
+  console.log();
+  const projectEntries = [...byProject.entries()].sort((a, b) => b[1] - a[1]);
+  if (projectEntries.length > 0) {
+    console.log(chalk9.white("  By project:"));
+    for (const [name, cost] of projectEntries) {
+      const pct = totalCost > 0 ? Math.round(cost / totalCost * 100) : 0;
+      const costStr = cost < 1 ? `$${cost.toFixed(3)}` : `$${cost.toFixed(2)}`;
+      console.log(
+        chalk9.dim("    ") + chalk9.cyan(name.padEnd(18)) + chalk9.yellow(costStr.padEnd(10)) + chalk9.dim(`(${pct}%)`.padEnd(7)) + renderBar(cost / totalCost)
+      );
+    }
+    console.log();
+  }
+  const modelEntries = [...byModel.entries()].sort((a, b) => b[1] - a[1]);
+  if (modelEntries.length > 0) {
+    console.log(chalk9.white("  By model:"));
+    for (const [name, cost] of modelEntries) {
+      const pct = totalCost > 0 ? Math.round(cost / totalCost * 100) : 0;
+      const costStr = cost < 1 ? `$${cost.toFixed(3)}` : `$${cost.toFixed(2)}`;
+      let label = name;
+      if (name.includes("opus")) label = "claude-opus";
+      else if (name.includes("sonnet")) label = "claude-sonnet";
+      else if (name.includes("haiku")) label = "claude-haiku";
+      let context = "";
+      if (pct > 70) context = "  most of your work";
+      else if (pct < 20) context = "  for the hard stuff";
+      console.log(
+        chalk9.dim("    ") + chalk9.white(label.padEnd(18)) + chalk9.yellow(costStr.padEnd(10)) + chalk9.dim(`(${pct}%)`) + chalk9.dim(context)
+      );
+    }
+    console.log();
+  }
+  console.log(chalk9.dim("  " + "\u2500".repeat(60)));
+  console.log();
+  console.log(
+    chalk9.dim("  ") + chalk9.cyan("devlog stats") + chalk9.dim(" usage trends  \xB7  ") + chalk9.cyan("devlog cost --period week") + chalk9.dim(" filter")
   );
   console.log();
 }
 
 // src/cli.ts
-var VERSION = "0.1.0";
+var VERSION2 = "0.3.0";
 var HELP_TEXT = `
-${chalk6.bold.cyan("  \u258C")} ${chalk6.bold.white("DevLog")} ${chalk6.dim(`v${VERSION}`)}
-${chalk6.dim("  Your Claude Code work journal")}
+${chalk10.bold.cyan("  \u258C")} ${chalk10.bold.white("DevLog")} ${chalk10.dim(`v${VERSION2}`)}
+${chalk10.dim("  Your Claude Code work journal")}
 
-${chalk6.bold.white("  Quick Start:")}
-${chalk6.dim("  Just run")} ${chalk6.cyan("devlog")} ${chalk6.dim("\u2014 that's it. No setup needed.")}
+${chalk10.bold.white("  Quick Start:")}
+${chalk10.dim("  Just run")} ${chalk10.cyan("devlog")} ${chalk10.dim("\u2014 that's it. No setup needed.")}
 
-${chalk6.bold.white("  Examples:")}
-${chalk6.cyan("  devlog")}${chalk6.dim("                       See your dashboard")}
-${chalk6.cyan("  devlog sessions")}${chalk6.dim("              Browse all sessions by project")}
-${chalk6.cyan("  devlog sessions -p chatbot")}${chalk6.dim("   Filter to a specific project")}
-${chalk6.cyan("  devlog show 1")}${chalk6.dim("                View your most recent conversation")}
-${chalk6.cyan("  devlog show abc123")}${chalk6.dim("           View a specific session by ID")}
+${chalk10.bold.white("  Examples:")}
+${chalk10.cyan("  devlog")}${chalk10.dim("                       See your dashboard")}
+${chalk10.cyan("  devlog today")}${chalk10.dim("                 What did I do today?")}
+${chalk10.cyan("  devlog sessions")}${chalk10.dim("              Browse all sessions by project")}
+${chalk10.cyan("  devlog sessions -p chatbot")}${chalk10.dim("   Filter to a specific project")}
+${chalk10.cyan("  devlog show 1")}${chalk10.dim("                View your most recent conversation")}
+${chalk10.cyan("  devlog show 1 --summary")}${chalk10.dim("      Quick narrative summary")}
+${chalk10.cyan("  devlog show abc123")}${chalk10.dim("           View a specific session by ID")}
+${chalk10.cyan('  devlog search "auth bug"')}${chalk10.dim("    Find a conversation")}
+${chalk10.cyan("  devlog stats")}${chalk10.dim("                 Usage trends")}
+${chalk10.cyan("  devlog cost")}${chalk10.dim("                  Cost breakdown")}
+
+${chalk10.bold.white("  Output Modes:")}
+${chalk10.cyan("  devlog --json")}${chalk10.dim("                JSON output for scripts/agents")}
+${chalk10.cyan("  devlog -q")}${chalk10.dim("                    Quiet mode (no spinners/banners)")}
+${chalk10.cyan("  devlog --no-color")}${chalk10.dim("            Plain text, no ANSI escapes")}
 `;
 var program = new Command();
-program.name("devlog").description("Your Claude Code work journal \u2014 auto-generated dev logs").version(VERSION).addHelpText("before", HELP_TEXT);
-program.action(async () => {
-  try {
-    await dashboardCommand();
-  } catch (err) {
+var KNOWN_COMMANDS = [
+  "init",
+  "sessions",
+  "show",
+  "today",
+  "search",
+  "stats",
+  "cost"
+];
+function getGlobalOpts() {
+  const opts = program.opts();
+  return { json: !!opts.json, quiet: !!opts.quiet };
+}
+function handleError(err, globalOpts) {
+  const message = err instanceof Error ? err.message : String(err);
+  if (globalOpts.json) {
+    outputJson({ error: message });
+  } else {
     console.error(
-      chalk6.red("\n  Error:"),
-      err instanceof Error ? err.message : err
+      chalk10.red("\n  Error:"),
+      message
     );
-    process.exit(1);
+  }
+  process.exit(1);
+}
+program.name("devlog").description("Your Claude Code work journal \u2014 auto-generated dev logs").version(VERSION2).option("--json", "Output as JSON for scripts and agents").option("-q, --quiet", "Suppress non-essential output").option("--no-color", "Disable colored output").addHelpText("before", HELP_TEXT);
+program.hook("preAction", () => {
+  const opts = program.opts();
+  if (opts.color === false) {
+    process.env.NO_COLOR = "1";
+  }
+  initOutput({ json: !!opts.json, quiet: !!opts.quiet });
+});
+program.action(async () => {
+  const globalOpts = getGlobalOpts();
+  try {
+    await dashboardCommand(globalOpts);
+  } catch (err) {
+    handleError(err, globalOpts);
   }
 });
 program.command("init").description("Set up DevLog (usually auto-detected, you rarely need this)").action(async () => {
+  const globalOpts = getGlobalOpts();
   try {
-    await initCommand();
+    await initCommand(globalOpts);
   } catch (err) {
-    console.error(
-      chalk6.red("\n  Error:"),
-      err instanceof Error ? err.message : err
-    );
-    process.exit(1);
+    handleError(err, globalOpts);
   }
 });
 program.command("sessions").description("Browse all sessions grouped by project").option("-p, --project <name>", "Filter by project name (fuzzy match)").option("-n, --limit <number>", "Max sessions to display", "30").option("-a, --all", "Show all sessions").action(async (options) => {
+  const globalOpts = getGlobalOpts();
   try {
-    await sessionsCommand(options);
+    await sessionsCommand(options, globalOpts);
   } catch (err) {
-    console.error(
-      chalk6.red("\n  Error:"),
-      err instanceof Error ? err.message : err
-    );
-    process.exit(1);
+    handleError(err, globalOpts);
   }
 });
-program.command("show <session>").description("View a full conversation (use a number like 1, 2, 3 or a session ID)").option("-n, --limit <number>", "Max events to display", "50").action(async (sessionRef, options) => {
+program.command("show <session>").description("View a full conversation (use a number like 1, 2, 3 or a session ID)").option("-n, --limit <number>", "Max events to display", "50").option("-s, --summary", "Show a narrative summary instead of the full conversation").action(async (sessionRef, options) => {
+  const globalOpts = getGlobalOpts();
   try {
-    await showCommand(sessionRef, options);
+    await showCommand(sessionRef, options, globalOpts);
   } catch (err) {
-    console.error(
-      chalk6.red("\n  Error:"),
-      err instanceof Error ? err.message : err
-    );
-    process.exit(1);
+    handleError(err, globalOpts);
   }
 });
+program.command("today").description("What did I do today?").action(async () => {
+  const globalOpts = getGlobalOpts();
+  try {
+    await todayCommand(globalOpts);
+  } catch (err) {
+    handleError(err, globalOpts);
+  }
+});
+program.command("search <query>").description("Search sessions by message, project, or tool name").action(async (query) => {
+  const globalOpts = getGlobalOpts();
+  try {
+    await searchCommand(query, globalOpts);
+  } catch (err) {
+    handleError(err, globalOpts);
+  }
+});
+program.command("stats").description("Aggregated usage statistics").option("--period <period>", "Filter: today, week, month, all", "all").action(async (options) => {
+  const globalOpts = getGlobalOpts();
+  try {
+    await statsCommand(options, globalOpts);
+  } catch (err) {
+    handleError(err, globalOpts);
+  }
+});
+program.command("cost").description("Cost breakdown by project and model").option("--period <period>", "Filter: today, week, month, all", "all").action(async (options) => {
+  const globalOpts = getGlobalOpts();
+  try {
+    await costCommand(options, globalOpts);
+  } catch (err) {
+    handleError(err, globalOpts);
+  }
+});
+var userArgs = process.argv.slice(2).filter((a) => !a.startsWith("-"));
+if (userArgs.length === 1 && !KNOWN_COMMANDS.includes(userArgs[0])) {
+  const candidate = userArgs[0];
+  const isNumber = /^\d+$/.test(candidate);
+  const isSessionId = /^[0-9a-f]{6,}$/i.test(candidate);
+  if (!isNumber && !isSessionId) {
+    let suggestion = "";
+    let bestDist = Infinity;
+    for (const cmd of KNOWN_COMMANDS) {
+      const dist = levenshtein(candidate, cmd);
+      if (dist < bestDist) {
+        bestDist = dist;
+        suggestion = cmd;
+      }
+    }
+    if (bestDist <= 3) {
+      console.error();
+      console.error(
+        chalk10.yellow(`  Unknown command: ${candidate}`)
+      );
+      console.error(
+        chalk10.dim("  Did you mean: ") + chalk10.cyan(suggestion) + chalk10.dim("?")
+      );
+      console.error(
+        chalk10.dim("  Run ") + chalk10.cyan("devlog --help") + chalk10.dim(" to see all commands.")
+      );
+      console.error();
+      process.exit(1);
+    }
+  }
+}
 program.parse();
 //# sourceMappingURL=cli.js.map
