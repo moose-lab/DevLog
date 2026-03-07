@@ -10,6 +10,7 @@ import { statsCommand } from "./commands/stats.js";
 import { costCommand } from "./commands/cost.js";
 import { statuslineCommand } from "./commands/statusline.js";
 import { setupStatuslineCommand } from "./commands/setup-statusline.js";
+import { setupTmuxCommand } from "./commands/setup-tmux.js";
 import { initOutput, outputJson } from "./utils/output.js";
 import { levenshtein } from "./utils/format.js";
 import type { GlobalOptions } from "./core/types.js";
@@ -57,6 +58,7 @@ const KNOWN_COMMANDS = [
   "cost",
   "statusline",
   "setup-statusline",
+  "setup-tmux",
 ];
 
 function getGlobalOpts(): GlobalOptions {
@@ -224,6 +226,19 @@ program
     const globalOpts = getGlobalOpts();
     try {
       await setupStatuslineCommand();
+    } catch (err) {
+      handleError(err, globalOpts);
+    }
+  });
+
+// ── devlog setup-tmux ───────────────────────────────────
+program
+  .command("setup-tmux")
+  .description("Configure tmux status bar with cost dashboard")
+  .action(async () => {
+    const globalOpts = getGlobalOpts();
+    try {
+      await setupTmuxCommand();
     } catch (err) {
       handleError(err, globalOpts);
     }
