@@ -2,7 +2,7 @@
 
 // src/cli.ts
 import { Command } from "commander";
-import chalk10 from "chalk";
+import chalk12 from "chalk";
 
 // src/commands/dashboard.ts
 import chalk2 from "chalk";
@@ -757,8 +757,65 @@ function toSessionJson(session) {
   };
 }
 
+// src/core/cache.ts
+import { readFileSync as readFileSync2, writeFileSync as writeFileSync2, renameSync, mkdirSync as mkdirSync2 } from "fs";
+import { join as join4, dirname } from "path";
+import dayjs3 from "dayjs";
+var CACHE_FILENAME = "stats-cache.json";
+var DEFAULT_MAX_AGE_MS = 5 * 60 * 1e3;
+function getCachePath() {
+  return join4(getDevlogDir(), "db", CACHE_FILENAME);
+}
+function readStatsCache() {
+  try {
+    const raw = readFileSync2(getCachePath(), "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+function writeStatsCache(cache) {
+  const cachePath = getCachePath();
+  const tmpPath = cachePath + ".tmp";
+  try {
+    mkdirSync2(dirname(cachePath), { recursive: true });
+    writeFileSync2(tmpPath, JSON.stringify(cache, null, 2), "utf-8");
+    renameSync(tmpPath, cachePath);
+  } catch {
+  }
+}
+function isCacheFresh(cache, maxAgeMs) {
+  const maxAge = maxAgeMs ?? DEFAULT_MAX_AGE_MS;
+  const todayStr = dayjs3().format("YYYY-MM-DD");
+  if (cache.todayDate !== todayStr) return false;
+  const age = Date.now() - new Date(cache.timestamp).getTime();
+  return age < maxAge;
+}
+function updateCacheFromStats(stats) {
+  const now = dayjs3();
+  const cache = {
+    timestamp: now.toISOString(),
+    todayDate: now.format("YYYY-MM-DD"),
+    today: {
+      sessions: stats.todaySessions,
+      costUSD: stats.todayCostUSD,
+      messages: stats.todayMessages,
+      toolCalls: stats.totalToolCalls,
+      // approx — full stats don't split today's tool calls
+      filesTouched: stats.allFilesReferenced.length,
+      projects: stats.mostActiveProject ? [stats.mostActiveProject] : []
+    },
+    allTime: {
+      sessions: stats.totalSessions,
+      costUSD: stats.totalCostUSD,
+      projects: stats.totalProjects
+    }
+  };
+  writeStatsCache(cache);
+}
+
 // src/commands/dashboard.ts
-var VERSION = "0.3.0";
+var VERSION = "0.4.0";
 async function dashboardCommand(globalOpts) {
   const { config, isFirstRun } = ensureInit();
   if (!existsSync3(config.claudeDir)) {
@@ -826,6 +883,7 @@ async function dashboardCommand(globalOpts) {
     return;
   }
   const stats = computeStats(projects);
+  updateCacheFromStats(stats);
   const groups = groupSessionsByTime(projects);
   if (isJsonMode()) {
     const allSessions = projects.flatMap((p) => p.sessions);
@@ -1572,9 +1630,9 @@ function renderSummary(session, events) {
 // src/commands/today.ts
 import chalk6 from "chalk";
 import ora5 from "ora";
-import dayjs3 from "dayjs";
+import dayjs4 from "dayjs";
 import isToday2 from "dayjs/plugin/isToday.js";
-dayjs3.extend(isToday2);
+dayjs4.extend(isToday2);
 async function todayCommand(globalOpts) {
   const { config } = ensureInit();
   let spinner = null;
@@ -1592,7 +1650,7 @@ async function todayCommand(globalOpts) {
   const projectNames = /* @__PURE__ */ new Set();
   for (const project of projects) {
     for (const session of project.sessions) {
-      if (dayjs3(session.updatedAt).isToday()) {
+      if (dayjs4(session.updatedAt).isToday()) {
         todaySessions.push(session);
         projectNames.add(session.projectName);
       }
@@ -1607,7 +1665,7 @@ async function todayCommand(globalOpts) {
       for (const f of s.meta.filesReferenced) allFiles2.add(f);
     }
     outputJson({
-      date: dayjs3().format("YYYY-MM-DD"),
+      date: dayjs4().format("YYYY-MM-DD"),
       sessionCount: todaySessions.length,
       projectCount: projectNames.size,
       totalCostUSD: Math.round(totalCost2 * 1e6) / 1e6,
@@ -1780,13 +1838,13 @@ async function searchCommand(query, globalOpts) {
 // src/commands/stats.ts
 import chalk8 from "chalk";
 import ora7 from "ora";
-import dayjs4 from "dayjs";
+import dayjs5 from "dayjs";
 import isToday3 from "dayjs/plugin/isToday.js";
-dayjs4.extend(isToday3);
+dayjs5.extend(isToday3);
 function filterByPeriod(sessions, period) {
-  const now = dayjs4();
+  const now = dayjs5();
   return sessions.filter((s) => {
-    const d = dayjs4(s.updatedAt);
+    const d = dayjs5(s.updatedAt);
     switch (period) {
       case "today":
         return d.isToday();
@@ -1813,6 +1871,9 @@ async function statsCommand(options, globalOpts) {
   }
   const projects = await discoverProjects(config.claudeDir);
   spinner?.stop();
+  if (projects.length > 0) {
+    updateCacheFromStats(computeStats(projects));
+  }
   const allSessions = [];
   for (const p of projects) allSessions.push(...p.sessions);
   const filtered = filterByPeriod(allSessions, period);
@@ -1923,13 +1984,13 @@ async function statsCommand(options, globalOpts) {
 // src/commands/cost.ts
 import chalk9 from "chalk";
 import ora8 from "ora";
-import dayjs5 from "dayjs";
+import dayjs6 from "dayjs";
 import isToday4 from "dayjs/plugin/isToday.js";
-dayjs5.extend(isToday4);
+dayjs6.extend(isToday4);
 function filterByPeriod2(sessions, period) {
-  const now = dayjs5();
+  const now = dayjs6();
   return sessions.filter((s) => {
-    const d = dayjs5(s.updatedAt);
+    const d = dayjs6(s.updatedAt);
     switch (period) {
       case "today":
         return d.isToday();
@@ -2039,31 +2100,345 @@ async function costCommand(options, globalOpts) {
   console.log();
 }
 
+// src/core/fast-discovery.ts
+import { readdir as readdir2, stat as stat2 } from "fs/promises";
+import { join as join5 } from "path";
+import dayjs7 from "dayjs";
+async function discoverTodayStats(claudeDir) {
+  const todayMidnight = dayjs7().startOf("day").valueOf();
+  const result = {
+    sessions: 0,
+    costUSD: 0,
+    messages: 0,
+    toolCalls: 0,
+    filesTouched: 0,
+    projects: []
+  };
+  const fileSet = /* @__PURE__ */ new Set();
+  const projectSet = /* @__PURE__ */ new Set();
+  let entries;
+  try {
+    entries = await readdir2(claudeDir, { withFileTypes: true });
+  } catch {
+    return result;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const projectDir = join5(claudeDir, entry.name);
+    const decodedPath = decodePath(entry.name);
+    const projectName = getProjectName(decodedPath);
+    let files;
+    try {
+      files = await readdir2(projectDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (!file.isFile() || !file.name.endsWith(".jsonl")) continue;
+      const filePath = join5(projectDir, file.name);
+      try {
+        const fileStat = await stat2(filePath);
+        if (fileStat.mtimeMs < todayMidnight) continue;
+        const meta = await scanSession(filePath);
+        const lastActivity = meta.lastActivity.getTime();
+        if (lastActivity < todayMidnight) continue;
+        result.sessions++;
+        result.costUSD += meta.totalCostUSD;
+        result.messages += meta.messageCount;
+        result.toolCalls += meta.toolCalls;
+        for (const f of meta.filesReferenced) fileSet.add(f);
+        projectSet.add(projectName);
+      } catch {
+        continue;
+      }
+    }
+  }
+  result.filesTouched = fileSet.size;
+  result.projects = [...projectSet];
+  return result;
+}
+
+// src/commands/statusline.ts
+import dayjs8 from "dayjs";
+async function statuslineCommand(options) {
+  const { config } = ensureInit();
+  const useCache = options.cache !== false;
+  const stdinData = process.stdin.isTTY ? null : await readStdinWithTimeout(50);
+  let cache = useCache ? readStatsCache() : null;
+  if (cache && useCache && isCacheFresh(cache)) {
+    process.stdout.write(formatStatusLine(cache, stdinData));
+    return;
+  }
+  try {
+    const todayStats = await discoverTodayStats(config.claudeDir);
+    const now = dayjs8();
+    cache = {
+      timestamp: now.toISOString(),
+      todayDate: now.format("YYYY-MM-DD"),
+      today: todayStats,
+      allTime: cache?.allTime ?? { sessions: 0, costUSD: 0, projects: 0 }
+    };
+    writeStatsCache(cache);
+  } catch {
+    if (!cache) {
+      process.stdout.write("DevLog: scanning...");
+      return;
+    }
+  }
+  process.stdout.write(formatStatusLine(cache, stdinData));
+}
+async function readStdinWithTimeout(ms) {
+  return Promise.race([
+    new Promise((resolve) => {
+      let data = "";
+      process.stdin.setEncoding("utf-8");
+      process.stdin.on("data", (chunk) => {
+        data += chunk;
+      });
+      process.stdin.on("end", () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch {
+          resolve(null);
+        }
+      });
+      process.stdin.resume();
+    }),
+    new Promise((resolve) => setTimeout(() => resolve(null), ms))
+  ]);
+}
+function formatStatusLine(cache, stdinData) {
+  const parts = [];
+  if (stdinData?.context_window?.used_percentage != null) {
+    parts.push(`ctx ${stdinData.context_window.used_percentage}%`);
+  }
+  if (cache.today.sessions > 0) {
+    const sessionWord = cache.today.sessions === 1 ? "session" : "sessions";
+    parts.push(`${formatCost(cache.today.costUSD)} today (${cache.today.sessions} ${sessionWord})`);
+  } else {
+    parts.push("No sessions today");
+  }
+  if (cache.allTime.costUSD > 0) {
+    parts.push(`${formatCost(cache.allTime.costUSD)} total`);
+  }
+  if (parts.length === 0) {
+    return "DevLog: no data yet";
+  }
+  return parts.join(" \xB7 ");
+}
+function formatCost(usd) {
+  if (usd < 0.01) return `$${usd.toFixed(3)}`;
+  if (usd < 1) return `$${usd.toFixed(2)}`;
+  if (usd >= 1e3) return `$${usd.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  return `$${usd.toFixed(2)}`;
+}
+
+// src/commands/setup-statusline.ts
+import { existsSync as existsSync5, readFileSync as readFileSync3, writeFileSync as writeFileSync3, mkdirSync as mkdirSync3 } from "fs";
+import { join as join6, dirname as dirname2 } from "path";
+import { homedir as homedir2 } from "os";
+import { execFileSync } from "child_process";
+import chalk10 from "chalk";
+async function setupStatuslineCommand() {
+  const { config } = ensureInit();
+  let devlogBin = "devlog";
+  try {
+    devlogBin = execFileSync("which", ["devlog"], { encoding: "utf-8" }).trim();
+  } catch {
+  }
+  const claudeSettingsPath = join6(homedir2(), ".claude", "settings.json");
+  let settings = {};
+  if (existsSync5(claudeSettingsPath)) {
+    try {
+      settings = JSON.parse(readFileSync3(claudeSettingsPath, "utf-8"));
+    } catch {
+      settings = {};
+    }
+  }
+  settings.statusLine = {
+    type: "command",
+    command: `${devlogBin} statusline`
+  };
+  mkdirSync3(dirname2(claudeSettingsPath), { recursive: true });
+  writeFileSync3(claudeSettingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+  console.log();
+  console.log(chalk10.green("  \u2713") + chalk10.bold.white(" Claude Code status line configured!"));
+  console.log();
+  console.log(chalk10.dim("  Warming cache..."));
+  try {
+    const projects = await discoverProjects(config.claudeDir);
+    if (projects.length > 0) {
+      updateCacheFromStats(computeStats(projects));
+    }
+    console.log(chalk10.dim("  Cache ready."));
+  } catch {
+    console.log(chalk10.dim("  Cache will be built on first use."));
+  }
+  console.log();
+  console.log(chalk10.white("  DevLog will show your daily costs and activity."));
+  console.log(chalk10.white("  Restart Claude Code to see it."));
+  console.log();
+}
+
+// src/commands/setup-tmux.ts
+import { existsSync as existsSync6, readFileSync as readFileSync4, writeFileSync as writeFileSync4, mkdirSync as mkdirSync4, copyFileSync, chmodSync } from "fs";
+import { join as join7, dirname as dirname3 } from "path";
+import { homedir as homedir3 } from "os";
+import { execFileSync as execFileSync2 } from "child_process";
+import { fileURLToPath } from "url";
+import chalk11 from "chalk";
+function makeHookCommand(state) {
+  return `bash -c 'echo "{\\"state\\":\\"${state}\\",\\"ts\\":$(date +%s)}" > ~/.claude-status.tmp && mv ~/.claude-status.tmp ~/.claude-status'`;
+}
+function removeExistingDevlogHooks(hooks) {
+  return hooks.filter((h) => !h.command.includes(".claude-status"));
+}
+function generateTmuxScript(devlogBin) {
+  return `#!/usr/bin/env bash
+# tmux-claude-status.sh \u2014 called by tmux status-right every 1s
+# Reads agent state from ~/.claude-status and cost from devlog statusline
+
+set -euo pipefail
+
+STATUS_FILE="$HOME/.claude-status"
+STALE_THRESHOLD=30  # seconds \u2014 treat as idle if older
+DEVLOG_BIN="${devlogBin}"
+
+# \u2500\u2500 Read agent state \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+state="idle"
+if [[ -f "$STATUS_FILE" ]]; then
+  raw=$(cat "$STATUS_FILE" 2>/dev/null || echo '{}')
+  state=$(echo "$raw" | grep -o '"state":"[^"]*"' | head -1 | cut -d'"' -f4)
+  ts=$(echo "$raw" | grep -o '"ts":[0-9]*' | head -1 | cut -d: -f2)
+  state="\${state:-idle}"
+
+  # Stale check: if timestamp is older than threshold, force idle
+  if [[ -n "$ts" ]]; then
+    now=$(date +%s)
+    age=$(( now - ts ))
+    if (( age > STALE_THRESHOLD )); then
+      state="idle"
+    fi
+  fi
+fi
+
+# \u2500\u2500 Read cost data \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+cost_line=$("$DEVLOG_BIN" statusline < /dev/null 2>/dev/null || echo "")
+
+# \u2500\u2500 Render \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# Cost color tiers: extract dollar amount for coloring
+cost_color="colour82"  # green default
+if [[ "$cost_line" =~ \\$([0-9,]+\\.?[0-9]*) ]]; then
+  amount="\${BASH_REMATCH[1]//,/}"
+  # Compare as integer cents to avoid bash float issues
+  cents=$(echo "$amount" | awk '{printf "%d", $1 * 100}')
+  if (( cents >= 1000 )); then
+    cost_color="colour196"  # red: >$10
+  elif (( cents >= 100 )); then
+    cost_color="colour226"  # yellow: $1-10
+  fi
+fi
+
+# State indicator
+case "$state" in
+  running) indicator="#[fg=colour82,bold]\u26A1#[default]" ;;
+  done)    indicator="#[fg=colour65]\u2713#[default]" ;;
+  error)   indicator="#[fg=colour196]\u2717#[default]" ;;
+  *)       indicator="#[fg=colour243]\u25CB#[default]" ;;
+esac
+
+# Final output
+if [[ -n "$cost_line" ]]; then
+  echo "#[fg=\${cost_color}]\${cost_line}#[default] \${indicator}"
+else
+  echo "\${indicator}"
+fi
+`;
+}
+async function setupTmuxCommand() {
+  let devlogBin = "devlog";
+  try {
+    devlogBin = execFileSync2("which", ["devlog"], { encoding: "utf-8" }).trim();
+  } catch {
+  }
+  const claudeSettingsPath = join7(homedir3(), ".claude", "settings.json");
+  let settings = {};
+  if (existsSync6(claudeSettingsPath)) {
+    try {
+      settings = JSON.parse(readFileSync4(claudeSettingsPath, "utf-8"));
+    } catch {
+      settings = {};
+    }
+  }
+  if (!settings.hooks) {
+    settings.hooks = {};
+  }
+  const preToolUse = removeExistingDevlogHooks(settings.hooks.PreToolUse ?? []);
+  preToolUse.push({ type: "command", command: makeHookCommand("running") });
+  settings.hooks.PreToolUse = preToolUse;
+  const postToolUse = removeExistingDevlogHooks(settings.hooks.PostToolUse ?? []);
+  postToolUse.push({ type: "command", command: makeHookCommand("done") });
+  settings.hooks.PostToolUse = postToolUse;
+  const stop = removeExistingDevlogHooks(settings.hooks.Stop ?? []);
+  stop.push({ type: "command", command: makeHookCommand("idle") });
+  settings.hooks.Stop = stop;
+  mkdirSync4(dirname3(claudeSettingsPath), { recursive: true });
+  writeFileSync4(claudeSettingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+  console.log();
+  console.log(chalk11.green("  \u2713") + chalk11.bold.white(" Claude Code hooks installed"));
+  const destDir = join7(homedir3(), ".devlog", "bin");
+  const destPath = join7(destDir, "tmux-claude-status.sh");
+  mkdirSync4(destDir, { recursive: true });
+  const thisFile = fileURLToPath(import.meta.url);
+  const srcPath = join7(dirname3(thisFile), "..", "..", "scripts", "tmux-claude-status.sh");
+  if (existsSync6(srcPath)) {
+    copyFileSync(srcPath, destPath);
+  } else {
+    writeFileSync4(destPath, generateTmuxScript(devlogBin), "utf-8");
+  }
+  chmodSync(destPath, 493);
+  console.log(chalk11.green("  \u2713") + chalk11.bold.white(` tmux script installed to ${destPath}`));
+  console.log();
+  console.log(chalk11.bold.white("  Add this to your ~/.tmux.conf:"));
+  console.log();
+  console.log(chalk11.cyan("    set -g status-interval 1"));
+  console.log(chalk11.cyan("    set -g status-right '#(~/.devlog/bin/tmux-claude-status.sh)'"));
+  console.log();
+  console.log(chalk11.bold.white("  Then reload tmux:"));
+  console.log();
+  console.log(chalk11.cyan("    tmux source-file ~/.tmux.conf"));
+  console.log();
+}
+
 // src/cli.ts
-var VERSION2 = "0.3.0";
+var VERSION2 = "0.4.0";
 var HELP_TEXT = `
-${chalk10.bold.cyan("  \u258C")} ${chalk10.bold.white("DevLog")} ${chalk10.dim(`v${VERSION2}`)}
-${chalk10.dim("  Your Claude Code work journal")}
+${chalk12.bold.cyan("  \u258C")} ${chalk12.bold.white("DevLog")} ${chalk12.dim(`v${VERSION2}`)}
+${chalk12.dim("  Your Claude Code work journal")}
 
-${chalk10.bold.white("  Quick Start:")}
-${chalk10.dim("  Just run")} ${chalk10.cyan("devlog")} ${chalk10.dim("\u2014 that's it. No setup needed.")}
+${chalk12.bold.white("  Quick Start:")}
+${chalk12.dim("  Just run")} ${chalk12.cyan("devlog")} ${chalk12.dim("\u2014 that's it. No setup needed.")}
 
-${chalk10.bold.white("  Examples:")}
-${chalk10.cyan("  devlog")}${chalk10.dim("                       See your dashboard")}
-${chalk10.cyan("  devlog today")}${chalk10.dim("                 What did I do today?")}
-${chalk10.cyan("  devlog sessions")}${chalk10.dim("              Browse all sessions by project")}
-${chalk10.cyan("  devlog sessions -p chatbot")}${chalk10.dim("   Filter to a specific project")}
-${chalk10.cyan("  devlog show 1")}${chalk10.dim("                View your most recent conversation")}
-${chalk10.cyan("  devlog show 1 --summary")}${chalk10.dim("      Quick narrative summary")}
-${chalk10.cyan("  devlog show abc123")}${chalk10.dim("           View a specific session by ID")}
-${chalk10.cyan('  devlog search "auth bug"')}${chalk10.dim("    Find a conversation")}
-${chalk10.cyan("  devlog stats")}${chalk10.dim("                 Usage trends")}
-${chalk10.cyan("  devlog cost")}${chalk10.dim("                  Cost breakdown")}
+${chalk12.bold.white("  Examples:")}
+${chalk12.cyan("  devlog")}${chalk12.dim("                       See your dashboard")}
+${chalk12.cyan("  devlog today")}${chalk12.dim("                 What did I do today?")}
+${chalk12.cyan("  devlog sessions")}${chalk12.dim("              Browse all sessions by project")}
+${chalk12.cyan("  devlog sessions -p chatbot")}${chalk12.dim("   Filter to a specific project")}
+${chalk12.cyan("  devlog show 1")}${chalk12.dim("                View your most recent conversation")}
+${chalk12.cyan("  devlog show 1 --summary")}${chalk12.dim("      Quick narrative summary")}
+${chalk12.cyan("  devlog show abc123")}${chalk12.dim("           View a specific session by ID")}
+${chalk12.cyan('  devlog search "auth bug"')}${chalk12.dim("    Find a conversation")}
+${chalk12.cyan("  devlog stats")}${chalk12.dim("                 Usage trends")}
+${chalk12.cyan("  devlog cost")}${chalk12.dim("                  Cost breakdown")}
 
-${chalk10.bold.white("  Output Modes:")}
-${chalk10.cyan("  devlog --json")}${chalk10.dim("                JSON output for scripts/agents")}
-${chalk10.cyan("  devlog -q")}${chalk10.dim("                    Quiet mode (no spinners/banners)")}
-${chalk10.cyan("  devlog --no-color")}${chalk10.dim("            Plain text, no ANSI escapes")}
+${chalk12.bold.white("  Agent Integration:")}
+${chalk12.cyan("  devlog setup-statusline")}${chalk12.dim("        Configure Claude Code status bar")}
+${chalk12.cyan("  devlog statusline")}${chalk12.dim("             Output status line (used by Claude Code)")}
+
+${chalk12.bold.white("  Output Modes:")}
+${chalk12.cyan("  devlog --json")}${chalk12.dim("                JSON output for scripts/agents")}
+${chalk12.cyan("  devlog -q")}${chalk12.dim("                    Quiet mode (no spinners/banners)")}
+${chalk12.cyan("  devlog --no-color")}${chalk12.dim("            Plain text, no ANSI escapes")}
 `;
 var program = new Command();
 var KNOWN_COMMANDS = [
@@ -2073,7 +2448,10 @@ var KNOWN_COMMANDS = [
   "today",
   "search",
   "stats",
-  "cost"
+  "cost",
+  "statusline",
+  "setup-statusline",
+  "setup-tmux"
 ];
 function getGlobalOpts() {
   const opts = program.opts();
@@ -2085,7 +2463,7 @@ function handleError(err, globalOpts) {
     outputJson({ error: message });
   } else {
     console.error(
-      chalk10.red("\n  Error:"),
+      chalk12.red("\n  Error:"),
       message
     );
   }
@@ -2163,6 +2541,28 @@ program.command("cost").description("Cost breakdown by project and model").optio
     handleError(err, globalOpts);
   }
 });
+program.command("statusline").description("Output status line for Claude Code integration").option("--no-cache", "Force refresh, skip cache").action(async (options) => {
+  try {
+    await statuslineCommand(options);
+  } catch {
+  }
+});
+program.command("setup-statusline").description("Configure Claude Code status bar integration").action(async () => {
+  const globalOpts = getGlobalOpts();
+  try {
+    await setupStatuslineCommand();
+  } catch (err) {
+    handleError(err, globalOpts);
+  }
+});
+program.command("setup-tmux").description("Configure tmux status bar with cost dashboard").action(async () => {
+  const globalOpts = getGlobalOpts();
+  try {
+    await setupTmuxCommand();
+  } catch (err) {
+    handleError(err, globalOpts);
+  }
+});
 var userArgs = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 if (userArgs.length === 1 && !KNOWN_COMMANDS.includes(userArgs[0])) {
   const candidate = userArgs[0];
@@ -2181,13 +2581,13 @@ if (userArgs.length === 1 && !KNOWN_COMMANDS.includes(userArgs[0])) {
     if (bestDist <= 3) {
       console.error();
       console.error(
-        chalk10.yellow(`  Unknown command: ${candidate}`)
+        chalk12.yellow(`  Unknown command: ${candidate}`)
       );
       console.error(
-        chalk10.dim("  Did you mean: ") + chalk10.cyan(suggestion) + chalk10.dim("?")
+        chalk12.dim("  Did you mean: ") + chalk12.cyan(suggestion) + chalk12.dim("?")
       );
       console.error(
-        chalk10.dim("  Run ") + chalk10.cyan("devlog --help") + chalk10.dim(" to see all commands.")
+        chalk12.dim("  Run ") + chalk12.cyan("devlog --help") + chalk12.dim(" to see all commands.")
       );
       console.error();
       process.exit(1);
