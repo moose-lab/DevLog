@@ -1,3 +1,6 @@
+import { readFileSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
 import { ensureInit } from "../core/config.js";
 import { readStatsCache, writeStatsCache, isCacheFresh } from "../core/cache.js";
 import { discoverTodayStats } from "../core/fast-discovery.js";
@@ -76,18 +79,50 @@ async function readStdinWithTimeout(ms: number): Promise<StdinSession | null> {
   ]);
 }
 
+function readAgentState(): string {
+  const statusFile = join(homedir(), ".claude-status");
+  try {
+    const raw = readFileSync(statusFile, "utf-8");
+    const match = raw.match(/"state":"([^"]+)"/);
+    const tsMatch = raw.match(/"ts":(\d+)/);
+    if (!match) return "idle";
+
+    // Stale check: >30s old → idle
+    if (tsMatch) {
+      const age = Math.floor(Date.now() / 1000) - Number(tsMatch[1]);
+      if (age > 30) return "idle";
+    }
+    return match[1];
+  } catch {
+    return "idle";
+  }
+}
+
+function stateIndicator(state: string): string {
+  switch (state) {
+    case "running": return "\u26A1";  // ⚡
+    case "done":    return "\u2713";  // ✓
+    case "error":   return "\u2717";  // ✗
+    default:        return "\u25CB";  // ○
+  }
+}
+
 function formatStatusLine(cache: StatsCache, stdinData: StdinSession | null): string {
   const parts: string[] = [];
+
+  // Agent state indicator (from hooks)
+  const state = readAgentState();
+  parts.push(stateIndicator(state));
 
   // Context window from Claude Code stdin
   if (stdinData?.context_window?.used_percentage != null) {
     parts.push(`ctx ${stdinData.context_window.used_percentage}%`);
   }
 
-  // Today stats
+  // Today stats — cost is the hero number, visually emphasized
   if (cache.today.sessions > 0) {
     const sessionWord = cache.today.sessions === 1 ? "session" : "sessions";
-    parts.push(`${formatCost(cache.today.costUSD)} today (${cache.today.sessions} ${sessionWord})`);
+    parts.push(`\u3010${formatCost(cache.today.costUSD)}\u3011today \u00B7 ${cache.today.sessions} ${sessionWord}`);
   } else {
     parts.push("No sessions today");
   }
@@ -95,10 +130,6 @@ function formatStatusLine(cache: StatsCache, stdinData: StdinSession | null): st
   // All-time total
   if (cache.allTime.costUSD > 0) {
     parts.push(`${formatCost(cache.allTime.costUSD)} total`);
-  }
-
-  if (parts.length === 0) {
-    return "DevLog: no data yet";
   }
 
   return parts.join(" \u00B7 ");
