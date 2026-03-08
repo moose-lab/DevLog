@@ -38,6 +38,7 @@ ${chalk.cyan("  devlog cost")}${chalk.dim("                  Cost breakdown")}
 
 ${chalk.bold.white("  Agent Integration:")}
 ${chalk.cyan("  devlog setup-statusline")}${chalk.dim("        Configure Claude Code status bar")}
+${chalk.cyan("  devlog setup-tmux")}${chalk.dim("             Configure tmux cost dashboard")}
 ${chalk.cyan("  devlog statusline")}${chalk.dim("             Output status line (used by Claude Code)")}
 
 ${chalk.bold.white("  Output Modes:")}
