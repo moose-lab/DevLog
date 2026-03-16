@@ -1,0 +1,120 @@
+export type TaskStatus = "todo" | "in_progress" | "done";
+export type TaskPriority = "low" | "medium" | "high" | "critical";
+
+export interface Task {
+  id: string;
+  project_id: string;
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  worktree_name: string | null;
+  session_id: string | null;
+  sort_order: number;
+  prompt: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export type SessionStatus =
+  | "pending"
+  | "running"
+  | "idle"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "killed";
+
+export interface Session {
+  id: string;
+  project_id: string;
+  task_id: string | null;
+  worktree_name: string | null;
+  worktree_path: string | null;
+  branch_name: string | null;
+  pid: number | null;
+  status: SessionStatus;
+  claude_command: string | null;
+  claude_session_id: string | null;
+  prompt: string | null;
+  exit_code: number | null;
+  log_path: string | null;
+  started_at: string;
+  ended_at: string | null;
+}
+
+/** A structured tool call from Claude's response */
+export interface ToolCall {
+  name: string;
+  input: Record<string, unknown>;
+}
+
+/** A chat message with structured content */
+export interface ChatMessage {
+  id: number;
+  session_id: string;
+  role: "user" | "assistant";
+  content: string;
+  tool_calls?: ToolCall[];
+  cost_usd?: number;
+  timestamp: string;
+}
+
+export type LockType = "write" | "conflict";
+
+export interface FileLock {
+  id: string;
+  project_id: string;
+  file_path: string;
+  worktree_name: string;
+  session_id: string | null;
+  lock_type: LockType;
+  detected_at: string;
+  resolved_at: string | null;
+}
+
+export interface Worktree {
+  name: string;
+  path: string;
+  branch: string;
+  head: string;
+  isMain: boolean;
+  filesChanged?: number;
+  activeSessions?: number;
+}
+
+export interface LogChunk {
+  id: number;
+  session_id: string;
+  chunk: string;
+  stream: "stdout" | "stderr";
+  timestamp: string;
+}
+
+export interface SSEEvent {
+  type: "log" | "status" | "conflict" | "heartbeat";
+  session_id?: string;
+  data: unknown;
+}
+
+export interface ActiveConflict {
+  file_path: string;
+  worktrees: string[];
+  detected_at: string;
+}
+
+export interface ChatMessage {
+  id: number;
+  session_id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+}
+
+export interface DevLogStats {
+  sessions: number;
+  totalCost: number;
+  toolCalls: number;
+  filesTouched: number;
+}
