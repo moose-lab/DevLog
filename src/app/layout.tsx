@@ -17,8 +17,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "DevTool",
-  description: "Local development dashboard",
+  title: "DevLog",
+  description: "Your Claude Code work journal — dashboard & CLI",
 };
 
 export default function RootLayout({

@@ -16,7 +16,7 @@ export function Header() {
   const title =
     PAGE_TITLES[pathname] ??
     Object.entries(PAGE_TITLES).find(([k]) => k !== "/" && pathname.startsWith(k))?.[1] ??
-    "DevTool";
+    "DevLog";
 
   return (
     <header className="flex h-14 items-center justify-between border-b border-border px-6">
