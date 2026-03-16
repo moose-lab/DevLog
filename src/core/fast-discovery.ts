@@ -2,7 +2,7 @@ import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import dayjs from "dayjs";
 import type { StatsCache } from "./types.js";
-import { decodePath, getProjectName } from "../utils/paths.js";
+import { decodePath, getProjectName } from "./paths.js";
 import { scanSession } from "./parser.js";
 
 /**

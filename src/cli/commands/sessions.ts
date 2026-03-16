@@ -1,8 +1,8 @@
 import chalk from "chalk";
 import ora from "ora";
-import { ensureInit } from "../core/config.js";
-import { discoverProjects, computeStats } from "../core/discovery.js";
-import type { Session, GlobalOptions, SessionsJson } from "../core/types.js";
+import { ensureInit } from "../../core/config.js";
+import { discoverProjects, computeStats } from "../../core/discovery.js";
+import type { Session, GlobalOptions, SessionsJson } from "../../core/types.js";
 import {
   formatSmartTime,
   truncate,

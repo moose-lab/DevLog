@@ -2,15 +2,15 @@ import chalk from "chalk";
 import ora from "ora";
 import dayjs from "dayjs";
 import isToday from "dayjs/plugin/isToday.js";
-import { ensureInit } from "../core/config.js";
-import { discoverProjects, computeStats } from "../core/discovery.js";
-import type { Session, GlobalOptions, AggregateStats } from "../core/types.js";
+import { ensureInit } from "../../core/config.js";
+import { discoverProjects, computeStats } from "../../core/discovery.js";
+import type { Session, GlobalOptions, AggregateStats } from "../../core/types.js";
 import {
   formatNumber,
   costWithContext,
 } from "../utils/format.js";
 import { outputJson, isJsonMode, isQuietMode } from "../utils/output.js";
-import { updateCacheFromStats } from "../core/cache.js";
+import { updateCacheFromStats } from "../../core/cache.js";
 
 dayjs.extend(isToday);
 
