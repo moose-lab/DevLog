@@ -13,7 +13,7 @@ import { setupStatuslineCommand } from "./commands/setup-statusline.js";
 import { setupTmuxCommand } from "./commands/setup-tmux.js";
 import { initOutput, outputJson } from "./utils/output.js";
 import { levenshtein } from "./utils/format.js";
-import type { GlobalOptions } from "./core/types.js";
+import type { GlobalOptions } from "../core/types.js";
 
 const VERSION = "0.4.0";
 

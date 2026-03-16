@@ -1,13 +1,13 @@
 import chalk from "chalk";
 import ora from "ora";
 import { existsSync } from "fs";
-import { ensureInit } from "../core/config.js";
+import { ensureInit } from "../../core/config.js";
 import {
   discoverProjects,
   computeStats,
   groupSessionsByTime,
-} from "../core/discovery.js";
-import type { Session, AggregateStats, GlobalOptions, DashboardJson } from "../core/types.js";
+} from "../../core/discovery.js";
+import type { Session, AggregateStats, GlobalOptions, DashboardJson } from "../../core/types.js";
 import {
   formatSmartTime,
   formatNumber,
@@ -17,10 +17,10 @@ import {
   toolCountContext,
   fileCountContext,
 } from "../utils/format.js";
-import { getClaudeProjectsDir } from "../utils/paths.js";
+import { getClaudeProjectsDir } from "../../core/paths.js";
 import { outputJson, isJsonMode, isQuietMode } from "../utils/output.js";
 import { toSessionJson } from "./shared.js";
-import { updateCacheFromStats } from "../core/cache.js";
+import { updateCacheFromStats } from "../../core/cache.js";
 
 const VERSION = "0.4.0";
 

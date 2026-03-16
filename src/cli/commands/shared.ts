@@ -1,4 +1,4 @@
-import type { Session, SessionJson } from "../core/types.js";
+import type { Session, SessionJson } from "../../core/types.js";
 
 export function toSessionJson(session: Session): SessionJson {
   return {

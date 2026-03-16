@@ -4,9 +4,9 @@ import { homedir } from "os";
 import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import chalk from "chalk";
-import { ensureInit } from "../core/config.js";
-import { discoverProjects, computeStats } from "../core/discovery.js";
-import { updateCacheFromStats } from "../core/cache.js";
+import { ensureInit } from "../../core/config.js";
+import { discoverProjects, computeStats } from "../../core/discovery.js";
+import { updateCacheFromStats } from "../../core/cache.js";
 
 interface Hook {
   type: string;

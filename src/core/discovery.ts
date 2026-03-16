@@ -6,7 +6,7 @@ import {
   decodePath,
   getProjectName,
   getClaudeProjectsDir,
-} from "../utils/paths.js";
+} from "./paths.js";
 import { scanSession } from "./parser.js";
 import dayjs from "dayjs";
 

@@ -1,10 +1,10 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { ensureInit } from "../core/config.js";
-import { readStatsCache, writeStatsCache, isCacheFresh } from "../core/cache.js";
-import { discoverTodayStats } from "../core/fast-discovery.js";
-import type { StatsCache } from "../core/types.js";
+import { ensureInit } from "../../core/config.js";
+import { readStatsCache, writeStatsCache, isCacheFresh } from "../../core/cache.js";
+import { discoverTodayStats } from "../../core/fast-discovery.js";
+import type { StatsCache } from "../../core/types.js";
 import dayjs from "dayjs";
 
 interface StatuslineOptions {

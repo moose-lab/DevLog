@@ -1,15 +1,15 @@
 import { existsSync } from "fs";
 import chalk from "chalk";
 import ora from "ora";
-import { initConfig, isInitialized, loadConfig } from "../core/config.js";
-import { getClaudeProjectsDir, getDevlogDir } from "../utils/paths.js";
-import { discoverProjects, computeStats } from "../core/discovery.js";
+import { initConfig, isInitialized, loadConfig } from "../../core/config.js";
+import { getClaudeProjectsDir, getDevlogDir } from "../../core/paths.js";
+import { discoverProjects, computeStats } from "../../core/discovery.js";
 import {
   printSuccess,
   printError,
   formatNumber,
 } from "../utils/format.js";
-import type { GlobalOptions } from "../core/types.js";
+import type { GlobalOptions } from "../../core/types.js";
 import { outputJson, isJsonMode, isQuietMode } from "../utils/output.js";
 
 export async function initCommand(globalOpts: GlobalOptions): Promise<void> {
