@@ -19,7 +19,7 @@ import {
 } from "../utils/format.js";
 import { getClaudeProjectsDir } from "../../core/paths.js";
 import { outputJson, isJsonMode, isQuietMode } from "../utils/output.js";
-import { toSessionJson } from "./shared.js";
+import { toSessionJson } from "./shared";
 import { updateCacheFromStats } from "../../core/cache.js";
 
 const VERSION = "0.4.0";

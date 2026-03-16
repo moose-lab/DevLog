@@ -1,8 +1,8 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import dayjs from "dayjs";
-import type { StatsCache, AggregateStats } from "./types.js";
-import { getDevlogDir } from "./paths.js";
+import type { StatsCache, AggregateStats } from "./types";
+import { getDevlogDir } from "./paths";
 
 const CACHE_FILENAME = "stats-cache.json";
 const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes

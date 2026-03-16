@@ -18,8 +18,8 @@ export async function GET(req: NextRequest) {
         const stats = computeStats(projects);
         return NextResponse.json({
           totalCostUSD: stats.totalCostUSD,
-          projectCount: stats.projectCount,
-          sessionCount: stats.sessionCount,
+          totalProjects: stats.totalProjects,
+          totalSessions: stats.totalSessions,
         });
       }
       case "today": {

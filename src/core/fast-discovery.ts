@@ -1,9 +1,9 @@
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import dayjs from "dayjs";
-import type { StatsCache } from "./types.js";
-import { decodePath, getProjectName } from "./paths.js";
-import { scanSession } from "./parser.js";
+import type { StatsCache } from "./types";
+import { decodePath, getProjectName } from "./paths";
+import { scanSession } from "./parser";
 
 /**
  * Fast discovery: only scan JSONL files modified today.
