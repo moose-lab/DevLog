@@ -2,7 +2,7 @@
 
 // src/cli/cli.ts
 import { Command } from "commander";
-import chalk12 from "chalk";
+import chalk13 from "chalk";
 
 // src/cli/commands/dashboard.ts
 import chalk2 from "chalk";
@@ -2542,39 +2542,82 @@ async function setupTmuxCommand() {
   console.log();
 }
 
+// src/cli/commands/serve.ts
+import { execFile } from "child_process";
+import path from "path";
+import chalk12 from "chalk";
+async function serveCommand(options, globalOpts) {
+  const port = options.port ?? "3333";
+  const projectRoot = path.resolve(import.meta.dirname, "..", "..", "..");
+  const nextConfigPath = path.join(projectRoot, "next.config.ts");
+  const fs = await import("fs");
+  if (!fs.existsSync(nextConfigPath)) {
+    console.error(chalk12.red("\n  Dashboard requires running from the DevLog source repo."));
+    console.error(chalk12.dim("  Clone https://github.com/moose-lab/DevLog and run from there.\n"));
+    process.exit(1);
+  }
+  console.log();
+  console.log(chalk12.bold.cyan("  \u258C") + chalk12.bold.white(" DevLog Dashboard"));
+  console.log(chalk12.dim(`  Starting on port ${port}...`));
+  console.log();
+  const child = execFile(
+    "npx",
+    ["next", "dev", "--port", port],
+    { cwd: projectRoot, stdio: "inherit" }
+  );
+  const cleanup = () => {
+    child.kill("SIGTERM");
+    process.exit(0);
+  };
+  process.on("SIGINT", cleanup);
+  process.on("SIGTERM", cleanup);
+  await new Promise((resolve, reject) => {
+    child.on("exit", (code) => {
+      if (code === 0 || code === null) resolve();
+      else reject(new Error(`Dashboard exited with code ${code}`));
+    });
+    child.on("error", reject);
+  });
+}
+
 // src/cli/cli.ts
 var VERSION2 = "0.4.0";
 var HELP_TEXT = `
-${chalk12.bold.cyan("  \u258C")} ${chalk12.bold.white("DevLog")} ${chalk12.dim(`v${VERSION2}`)}
-${chalk12.dim("  Your Claude Code work journal")}
+${chalk13.bold.cyan("  \u258C")} ${chalk13.bold.white("DevLog")} ${chalk13.dim(`v${VERSION2}`)}
+${chalk13.dim("  Your Claude Code work journal")}
 
-${chalk12.bold.white("  Quick Start:")}
-${chalk12.dim("  Just run")} ${chalk12.cyan("devlog")} ${chalk12.dim("\u2014 that's it. No setup needed.")}
+${chalk13.bold.white("  Quick Start:")}
+${chalk13.dim("  Just run")} ${chalk13.cyan("devlog")} ${chalk13.dim("\u2014 that's it. No setup needed.")}
 
-${chalk12.bold.white("  Examples:")}
-${chalk12.cyan("  devlog")}${chalk12.dim("                       See your dashboard")}
-${chalk12.cyan("  devlog today")}${chalk12.dim("                 What did I do today?")}
-${chalk12.cyan("  devlog sessions")}${chalk12.dim("              Browse all sessions by project")}
-${chalk12.cyan("  devlog sessions -p chatbot")}${chalk12.dim("   Filter to a specific project")}
-${chalk12.cyan("  devlog show 1")}${chalk12.dim("                View your most recent conversation")}
-${chalk12.cyan("  devlog show 1 --summary")}${chalk12.dim("      Quick narrative summary")}
-${chalk12.cyan("  devlog show abc123")}${chalk12.dim("           View a specific session by ID")}
-${chalk12.cyan('  devlog search "auth bug"')}${chalk12.dim("    Find a conversation")}
-${chalk12.cyan("  devlog stats")}${chalk12.dim("                 Usage trends")}
-${chalk12.cyan("  devlog cost")}${chalk12.dim("                  Cost breakdown")}
+${chalk13.bold.white("  Examples:")}
+${chalk13.cyan("  devlog")}${chalk13.dim("                       See your dashboard")}
+${chalk13.cyan("  devlog today")}${chalk13.dim("                 What did I do today?")}
+${chalk13.cyan("  devlog sessions")}${chalk13.dim("              Browse all sessions by project")}
+${chalk13.cyan("  devlog sessions -p chatbot")}${chalk13.dim("   Filter to a specific project")}
+${chalk13.cyan("  devlog show 1")}${chalk13.dim("                View your most recent conversation")}
+${chalk13.cyan("  devlog show 1 --summary")}${chalk13.dim("      Quick narrative summary")}
+${chalk13.cyan("  devlog show abc123")}${chalk13.dim("           View a specific session by ID")}
+${chalk13.cyan('  devlog search "auth bug"')}${chalk13.dim("    Find a conversation")}
+${chalk13.cyan("  devlog stats")}${chalk13.dim("                 Usage trends")}
+${chalk13.cyan("  devlog cost")}${chalk13.dim("                  Cost breakdown")}
 
-${chalk12.bold.white("  Agent Integration:")}
-${chalk12.cyan("  devlog setup-statusline")}${chalk12.dim("        Configure Claude Code status bar")}
-${chalk12.cyan("  devlog setup-tmux")}${chalk12.dim("             Configure tmux cost dashboard")}
-${chalk12.cyan("  devlog statusline")}${chalk12.dim("             Output status line (used by Claude Code)")}
+${chalk13.bold.white("  Dashboard:")}
+${chalk13.cyan("  devlog serve")}${chalk13.dim("                 Start the web dashboard")}
+${chalk13.cyan("  devlog serve -p 4000")}${chalk13.dim("         Dashboard on custom port")}
 
-${chalk12.bold.white("  Output Modes:")}
-${chalk12.cyan("  devlog --json")}${chalk12.dim("                JSON output for scripts/agents")}
-${chalk12.cyan("  devlog -q")}${chalk12.dim("                    Quiet mode (no spinners/banners)")}
-${chalk12.cyan("  devlog --no-color")}${chalk12.dim("            Plain text, no ANSI escapes")}
+${chalk13.bold.white("  Agent Integration:")}
+${chalk13.cyan("  devlog setup-statusline")}${chalk13.dim("        Configure Claude Code status bar")}
+${chalk13.cyan("  devlog setup-tmux")}${chalk13.dim("             Configure tmux cost dashboard")}
+${chalk13.cyan("  devlog statusline")}${chalk13.dim("             Output status line (used by Claude Code)")}
+
+${chalk13.bold.white("  Output Modes:")}
+${chalk13.cyan("  devlog --json")}${chalk13.dim("                JSON output for scripts/agents")}
+${chalk13.cyan("  devlog -q")}${chalk13.dim("                    Quiet mode (no spinners/banners)")}
+${chalk13.cyan("  devlog --no-color")}${chalk13.dim("            Plain text, no ANSI escapes")}
 `;
 var program = new Command();
 var KNOWN_COMMANDS = [
+  "serve",
   "init",
   "sessions",
   "show",
@@ -2596,7 +2639,7 @@ function handleError(err, globalOpts) {
     outputJson({ error: message });
   } else {
     console.error(
-      chalk12.red("\n  Error:"),
+      chalk13.red("\n  Error:"),
       message
     );
   }
@@ -2614,6 +2657,14 @@ program.action(async () => {
   const globalOpts = getGlobalOpts();
   try {
     await dashboardCommand(globalOpts);
+  } catch (err) {
+    handleError(err, globalOpts);
+  }
+});
+program.command("serve").description("Start the DevLog dashboard").option("-p, --port <port>", "Port number", "3333").action(async (options) => {
+  const globalOpts = getGlobalOpts();
+  try {
+    await serveCommand(options, globalOpts);
   } catch (err) {
     handleError(err, globalOpts);
   }
@@ -2714,13 +2765,13 @@ if (userArgs.length === 1 && !KNOWN_COMMANDS.includes(userArgs[0])) {
     if (bestDist <= 3) {
       console.error();
       console.error(
-        chalk12.yellow(`  Unknown command: ${candidate}`)
+        chalk13.yellow(`  Unknown command: ${candidate}`)
       );
       console.error(
-        chalk12.dim("  Did you mean: ") + chalk12.cyan(suggestion) + chalk12.dim("?")
+        chalk13.dim("  Did you mean: ") + chalk13.cyan(suggestion) + chalk13.dim("?")
       );
       console.error(
-        chalk12.dim("  Run ") + chalk12.cyan("devlog --help") + chalk12.dim(" to see all commands.")
+        chalk13.dim("  Run ") + chalk13.cyan("devlog --help") + chalk13.dim(" to see all commands.")
       );
       console.error();
       process.exit(1);

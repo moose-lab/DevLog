@@ -11,6 +11,7 @@ import { costCommand } from "./commands/cost.js";
 import { statuslineCommand } from "./commands/statusline.js";
 import { setupStatuslineCommand } from "./commands/setup-statusline.js";
 import { setupTmuxCommand } from "./commands/setup-tmux.js";
+import { serveCommand } from "./commands/serve.js";
 import { initOutput, outputJson } from "./utils/output.js";
 import { levenshtein } from "./utils/format.js";
 import type { GlobalOptions } from "../core/types.js";
@@ -36,6 +37,10 @@ ${chalk.cyan("  devlog search \"auth bug\"")}${chalk.dim("    Find a conversatio
 ${chalk.cyan("  devlog stats")}${chalk.dim("                 Usage trends")}
 ${chalk.cyan("  devlog cost")}${chalk.dim("                  Cost breakdown")}
 
+${chalk.bold.white("  Dashboard:")}
+${chalk.cyan("  devlog serve")}${chalk.dim("                 Start the web dashboard")}
+${chalk.cyan("  devlog serve -p 4000")}${chalk.dim("         Dashboard on custom port")}
+
 ${chalk.bold.white("  Agent Integration:")}
 ${chalk.cyan("  devlog setup-statusline")}${chalk.dim("        Configure Claude Code status bar")}
 ${chalk.cyan("  devlog setup-tmux")}${chalk.dim("             Configure tmux cost dashboard")}
@@ -50,6 +55,7 @@ ${chalk.cyan("  devlog --no-color")}${chalk.dim("            Plain text, no ANSI
 const program = new Command();
 
 const KNOWN_COMMANDS = [
+  "serve",
   "init",
   "sessions",
   "show",
@@ -107,6 +113,20 @@ program.action(async () => {
     handleError(err, globalOpts);
   }
 });
+
+// ── devlog serve ─────────────────────────────────────────
+program
+  .command("serve")
+  .description("Start the DevLog dashboard")
+  .option("-p, --port <port>", "Port number", "3333")
+  .action(async (options) => {
+    const globalOpts = getGlobalOpts();
+    try {
+      await serveCommand(options, globalOpts);
+    } catch (err) {
+      handleError(err, globalOpts);
+    }
+  });
 
 // ── devlog init ──────────────────────────────────────────
 program
