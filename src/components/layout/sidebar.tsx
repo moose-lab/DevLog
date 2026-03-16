@@ -38,7 +38,7 @@ export function Sidebar() {
     <aside className="flex h-screen w-56 flex-col border-r border-border bg-sidebar">
       <div className="flex h-14 items-center gap-2 border-b border-border px-4">
         <Terminal className="h-5 w-5 text-sidebar-primary" />
-        <span className="font-semibold text-sidebar-foreground">DevTool</span>
+        <span className="font-semibold text-sidebar-foreground">DevLog</span>
       </div>
       {/* Project context */}
       <div className="border-b border-border px-4 py-2">
