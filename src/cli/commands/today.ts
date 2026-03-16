@@ -14,7 +14,7 @@ import {
   fileCountContext,
 } from "../utils/format.js";
 import { outputJson, isJsonMode, isQuietMode } from "../utils/output.js";
-import { toSessionJson } from "./shared.js";
+import { toSessionJson } from "./shared";
 
 dayjs.extend(isToday);
 

@@ -8,8 +8,8 @@ import type {
   ToolUseBlock,
   ToolResultBlock,
   SessionMeta,
-} from "./types.js";
-import { computeCost } from "./pricing.js";
+} from "./types";
+import { computeCost } from "./pricing";
 
 // Types to skip entirely
 const SKIP_TYPES = new Set([

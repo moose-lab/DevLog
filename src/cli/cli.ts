@@ -1,20 +1,20 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { dashboardCommand } from "./commands/dashboard.js";
-import { initCommand } from "./commands/init.js";
-import { sessionsCommand } from "./commands/sessions.js";
-import { showCommand } from "./commands/show.js";
-import { todayCommand } from "./commands/today.js";
-import { searchCommand } from "./commands/search.js";
-import { statsCommand } from "./commands/stats.js";
-import { costCommand } from "./commands/cost.js";
-import { statuslineCommand } from "./commands/statusline.js";
-import { setupStatuslineCommand } from "./commands/setup-statusline.js";
-import { setupTmuxCommand } from "./commands/setup-tmux.js";
-import { serveCommand } from "./commands/serve.js";
-import { initOutput, outputJson } from "./utils/output.js";
-import { levenshtein } from "./utils/format.js";
-import type { GlobalOptions } from "../core/types.js";
+import { dashboardCommand } from "./commands/dashboard";
+import { initCommand } from "./commands/init";
+import { sessionsCommand } from "./commands/sessions";
+import { showCommand } from "./commands/show";
+import { todayCommand } from "./commands/today";
+import { searchCommand } from "./commands/search";
+import { statsCommand } from "./commands/stats";
+import { costCommand } from "./commands/cost";
+import { statuslineCommand } from "./commands/statusline";
+import { setupStatuslineCommand } from "./commands/setup-statusline";
+import { setupTmuxCommand } from "./commands/setup-tmux";
+import { serveCommand } from "./commands/serve";
+import { initOutput, outputJson } from "./utils/output";
+import { levenshtein } from "./utils/format";
+import type { GlobalOptions } from "../core/types";
 
 const VERSION = "0.4.0";
 
