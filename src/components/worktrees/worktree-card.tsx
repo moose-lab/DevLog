@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GitBranch, FileText, Trash2 } from "lucide-react";
-import type { Worktree } from "@/lib/types";
+import type { Worktree } from "@/core/types-dashboard";
 
 interface WorktreeCardProps {
   worktree: Worktree;

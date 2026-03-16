@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
+import { getDb } from "@/core/db";
 
 interface ReorderItem {
   id: string;

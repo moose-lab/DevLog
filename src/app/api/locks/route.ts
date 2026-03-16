@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
+import { getDb } from "@/core/db";
 import { resolveProjectId } from "@/lib/api-utils";
-import { fileWatcher } from "@/lib/file-watcher";
-import type { FileLock } from "@/lib/types";
+import { fileWatcher } from "@/core/file-watcher";
+import type { FileLock } from "@/core/types-dashboard";
 
 export async function GET(req: NextRequest) {
   const db = getDb();

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { Task, TaskStatus, TaskPriority } from "@/lib/types";
+import type { Task, TaskStatus, TaskPriority } from "@/core/types-dashboard";
 
 export function useTasks() {
   const [tasks, setTasks] = useState<Task[]>([]);

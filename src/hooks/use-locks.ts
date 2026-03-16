@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { FileLock } from "@/lib/types";
+import type { FileLock } from "@/core/types-dashboard";
 
 interface Conflict {
   file_path: string;

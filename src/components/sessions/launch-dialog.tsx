@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Loader2 } from "lucide-react";
-import type { Worktree } from "@/lib/types";
+import type { Worktree } from "@/core/types-dashboard";
 
 const EXAMPLE_PROMPTS = [
   "Fix the bug in...",

@@ -3,8 +3,8 @@
 import { Droppable } from "@hello-pangea/dnd";
 import { TaskCard } from "./task-card";
 import { Badge } from "@/components/ui/badge";
-import type { Task, TaskStatus } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import type { Task, TaskStatus } from "@/core/types-dashboard";
+import { cn } from "@/core/dashboard-utils";
 
 const COLUMN_CONFIG: Record<TaskStatus, { label: string; color: string }> = {
   todo: { label: "Todo", color: "bg-slate-500" },

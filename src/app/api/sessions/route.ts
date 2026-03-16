@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
-import { getDb } from "@/lib/db";
+import { getDb } from "@/core/db";
 import { resolveProjectId } from "@/lib/api-utils";
-import { processManager } from "@/lib/process-manager";
-import type { Session } from "@/lib/types";
+import { processManager } from "@/core/process-manager";
+import type { Session } from "@/core/types-dashboard";
 
 export async function GET(req: NextRequest) {
   const db = getDb();

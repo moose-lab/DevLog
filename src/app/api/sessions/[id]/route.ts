@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
-import { processManager } from "@/lib/process-manager";
-import type { Session } from "@/lib/types";
+import { getDb } from "@/core/db";
+import { processManager } from "@/core/process-manager";
+import type { Session } from "@/core/types-dashboard";
 
 export async function GET(
   _req: NextRequest,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { Session } from "@/lib/types";
+import type { Session } from "@/core/types-dashboard";
 
 export function useSessions() {
   const [sessions, setSessions] = useState<Session[]>([]);

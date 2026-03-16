@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
-import type { Task } from "@/lib/types";
+import { getDb } from "@/core/db";
+import type { Task } from "@/core/types-dashboard";
 
 export async function GET(
   _req: NextRequest,

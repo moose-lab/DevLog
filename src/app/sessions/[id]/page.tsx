@@ -7,7 +7,7 @@ import { ProcessIndicator } from "@/components/sessions/process-indicator";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Square, Trash2, GitBranch } from "lucide-react";
-import type { Session } from "@/lib/types";
+import type { Session } from "@/core/types-dashboard";
 
 export default function SessionDetailPage() {
   const params = useParams<{ id: string }>();

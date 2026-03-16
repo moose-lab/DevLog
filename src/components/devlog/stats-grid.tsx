@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Terminal, DollarSign, Wrench, FileText } from "lucide-react";
-import type { DevLogStats } from "@/lib/types";
+import type { DevLogStats } from "@/core/types-dashboard";
 
 interface StatsGridProps {
   stats: DevLogStats;

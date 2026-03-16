@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { listProjects, getActiveProject } from "@/lib/project-adapter";
+import { listProjects, getActiveProject } from "@/core/project-adapter";
 
 export async function GET() {
   const projects = listProjects();

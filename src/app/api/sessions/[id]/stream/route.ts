@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { getDb } from "@/lib/db";
-import { streamManager } from "@/lib/stream-manager";
-import type { ChatMessage } from "@/lib/types";
+import { getDb } from "@/core/db";
+import { streamManager } from "@/core/stream-manager";
+import type { ChatMessage } from "@/core/types-dashboard";
 
 export async function GET(
   _req: NextRequest,

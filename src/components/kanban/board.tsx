@@ -6,7 +6,7 @@ import { KanbanColumn } from "./column";
 import { CreateTaskDialog } from "./create-task-dialog";
 import { TaskDetailDialog } from "./task-detail-dialog";
 import { useTasks } from "@/hooks/use-tasks";
-import type { Task, TaskStatus } from "@/lib/types";
+import type { Task, TaskStatus } from "@/core/types-dashboard";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const COLUMNS: TaskStatus[] = ["todo", "in_progress", "done"];

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { DevLogStats } from "@/lib/types";
+import type { DevLogStats } from "@/core/types-dashboard";
 
 export function useDevlog() {
   const [stats, setStats] = useState<DevLogStats | null>(null);
