@@ -11,7 +11,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Check } from "lucide-react";
-import type { FileLock } from "@/lib/types";
+import type { FileLock } from "@/core/types-dashboard";
 
 interface LockTableProps {
   locks: FileLock[];

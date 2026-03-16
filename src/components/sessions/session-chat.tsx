@@ -25,7 +25,7 @@ import {
   Clock,
   ListOrdered,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/core/dashboard-utils";
 
 // Tool icon mapping
 function ToolIcon({ name }: { name: string }) {

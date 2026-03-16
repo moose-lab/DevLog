@@ -1,7 +1,7 @@
 "use client";
 
-import { cn } from "@/lib/utils";
-import type { SessionStatus } from "@/lib/types";
+import { cn } from "@/core/dashboard-utils";
+import type { SessionStatus } from "@/core/types-dashboard";
 
 const STATUS_CONFIG: Record<SessionStatus, { color: string; label: string; pulse: boolean }> = {
   pending: { color: "bg-yellow-500", label: "Pending", pulse: true },

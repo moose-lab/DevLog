@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { Worktree } from "@/lib/types";
+import type { Worktree } from "@/core/types-dashboard";
 
 export function useWorktrees() {
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);

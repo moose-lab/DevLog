@@ -4,7 +4,7 @@ import {
   removeWorktree,
   getWorktreeDiff,
   getWorktreeLog,
-} from "@/lib/worktree-manager";
+} from "@/core/worktree-manager";
 
 export async function GET(
   _req: NextRequest,

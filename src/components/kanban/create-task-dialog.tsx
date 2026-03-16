@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus } from "lucide-react";
-import type { TaskPriority } from "@/lib/types";
+import type { TaskPriority } from "@/core/types-dashboard";
 
 interface CreateTaskDialogProps {
   onSubmit: (data: {

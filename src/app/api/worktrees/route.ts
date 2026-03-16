@@ -3,7 +3,7 @@ import {
   listWorktrees,
   createWorktree,
   getWorktreeFilesChanged,
-} from "@/lib/worktree-manager";
+} from "@/core/worktree-manager";
 import { resolveProjectId } from "@/lib/api-utils";
 
 export async function GET(req: NextRequest) {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
+import { getDb } from "@/core/db";
 import { resolveProjectId } from "@/lib/api-utils";
-import type { Task } from "@/lib/types";
+import type { Task } from "@/core/types-dashboard";
 
 export async function GET(req: NextRequest) {
   const db = getDb();

@@ -11,7 +11,7 @@ import {
   BarChart3,
   FolderOpen,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/core/dashboard-utils";
 import { useProjects } from "@/hooks/use-projects";
 import {
   Select,

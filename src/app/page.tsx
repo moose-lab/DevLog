@@ -14,7 +14,7 @@ import {
   Rocket,
   AlertTriangle,
 } from "lucide-react";
-import type { Session, Task, Worktree } from "@/lib/types";
+import type { Session, Task, Worktree } from "@/core/types-dashboard";
 
 interface DashboardData {
   sessions: Session[];

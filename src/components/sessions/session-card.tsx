@@ -12,7 +12,7 @@ import {
   MessageSquare,
   Clock,
 } from "lucide-react";
-import type { Session } from "@/lib/types";
+import type { Session } from "@/core/types-dashboard";
 
 interface SessionCardProps {
   session: Session;

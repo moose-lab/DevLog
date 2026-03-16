@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { setActiveProject, getActiveProject } from "@/lib/project-adapter";
+import { setActiveProject, getActiveProject } from "@/core/project-adapter";
 
 export async function PUT(req: NextRequest) {
   const { projectId } = await req.json();

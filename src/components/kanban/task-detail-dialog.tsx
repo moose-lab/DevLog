@@ -29,8 +29,8 @@ import {
   GitBranch,
   Terminal,
 } from "lucide-react";
-import type { Task, TaskPriority, TaskStatus, Worktree } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import type { Task, TaskPriority, TaskStatus, Worktree } from "@/core/types-dashboard";
+import { cn } from "@/core/dashboard-utils";
 
 const PRIORITY_COLORS: Record<string, string> = {
   low: "bg-slate-500/20 text-slate-400 border-slate-500/30",
