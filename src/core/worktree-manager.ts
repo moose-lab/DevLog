@@ -1,0 +1,116 @@
+import { execFile } from "child_process";
+import { promisify } from "util";
+import path from "path";
+import type { Worktree } from "./types-dashboard";
+import { getRepoRoot } from "./project-adapter";
+
+const execFileAsync = promisify(execFile);
+
+async function git(projectId: string | undefined, ...args: string[]): Promise<string> {
+  const repoRoot = getRepoRoot(projectId);
+  const { stdout } = await execFileAsync("git", args, { cwd: repoRoot });
+  return stdout;
+}
+
+export async function listWorktrees(projectId?: string): Promise<Worktree[]> {
+  const raw = await git(projectId, "worktree", "list", "--porcelain");
+  const entries: Worktree[] = [];
+  let current: Partial<Worktree> = {};
+
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      current.path = line.slice(9).trim();
+      current.name = path.basename(current.path);
+    } else if (line.startsWith("HEAD ")) {
+      current.head = line.slice(5).trim();
+    } else if (line.startsWith("branch ")) {
+      current.branch = line.slice(7).trim().replace("refs/heads/", "");
+    } else if (line === "detached") {
+      current.branch = "(detached)";
+    } else if (line === "") {
+      if (current.path) {
+        entries.push({
+          name: current.name!,
+          path: current.path,
+          branch: current.branch ?? "unknown",
+          head: current.head ?? "",
+          isMain: entries.length === 0,
+        });
+      }
+      current = {};
+    }
+  }
+
+  return entries;
+}
+
+export async function createWorktree(
+  name: string,
+  branch: string,
+  baseBranch?: string,
+  projectId?: string
+): Promise<Worktree> {
+  const repoRoot = getRepoRoot(projectId);
+  const worktreePath = path.join(repoRoot, ".worktrees", name);
+
+  if (baseBranch) {
+    await git(projectId, "worktree", "add", "-b", branch, worktreePath, baseBranch);
+  } else {
+    await git(projectId, "worktree", "add", "-b", branch, worktreePath);
+  }
+
+  const worktrees = await listWorktrees(projectId);
+  const created = worktrees.find((w) => w.path === worktreePath);
+  if (!created) throw new Error("Worktree created but not found in list");
+  return created;
+}
+
+export async function removeWorktree(name: string, projectId?: string): Promise<void> {
+  const worktrees = await listWorktrees(projectId);
+  const wt = worktrees.find((w) => w.name === name);
+  if (!wt) throw new Error(`Worktree '${name}' not found`);
+  if (wt.isMain) throw new Error("Cannot remove main worktree");
+
+  await git(projectId, "worktree", "remove", wt.path, "--force");
+}
+
+export async function getWorktreeDiff(name: string, projectId?: string): Promise<string> {
+  const worktrees = await listWorktrees(projectId);
+  const wt = worktrees.find((w) => w.name === name);
+  if (!wt) throw new Error(`Worktree '${name}' not found`);
+
+  const { stdout } = await execFileAsync("git", ["diff", "--stat"], {
+    cwd: wt.path,
+  });
+  return stdout;
+}
+
+export async function getWorktreeLog(name: string, projectId?: string): Promise<string> {
+  const worktrees = await listWorktrees(projectId);
+  const wt = worktrees.find((w) => w.name === name);
+  if (!wt) throw new Error(`Worktree '${name}' not found`);
+
+  const { stdout } = await execFileAsync(
+    "git",
+    ["log", "--oneline", "-10"],
+    { cwd: wt.path }
+  );
+  return stdout;
+}
+
+export async function getWorktreeFilesChanged(name: string, projectId?: string): Promise<number> {
+  const worktrees = await listWorktrees(projectId);
+  const wt = worktrees.find((w) => w.name === name);
+  if (!wt) return 0;
+
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["diff", "--name-only"],
+      { cwd: wt.path }
+    );
+    return stdout.trim().split("\n").filter(Boolean).length;
+  } catch {
+    return 0;
+  }
+}

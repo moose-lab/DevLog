@@ -1,13 +1,13 @@
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
-import type { Project, Session, AggregateStats } from "./types.js";
+import type { Project, Session, AggregateStats } from "./types";
 import {
   decodePath,
   getProjectName,
   getClaudeProjectsDir,
-} from "../utils/paths.js";
-import { scanSession } from "./parser.js";
+} from "./paths";
+import { scanSession } from "./parser";
 import dayjs from "dayjs";
 
 /**
