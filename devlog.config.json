@@ -1,0 +1,12 @@
+{
+  "projects": [
+    {
+      "id": "videoclaw",
+      "name": "VideoClaw",
+      "path": "/Users/moose/Moose/videoclaw",
+      "defaultBranch": "main"
+    }
+  ],
+  "activeProject": "videoclaw",
+  "port": 3333
+}

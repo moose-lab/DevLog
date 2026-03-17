@@ -148,6 +148,26 @@ export interface AggregateStats {
   mostActiveProjectSessions: number;
 }
 
+// ── Stats Cache ──────────────────────────────────────────
+
+export interface StatsCache {
+  timestamp: string;      // ISO date of last computation
+  todayDate: string;      // "YYYY-MM-DD" — invalidate on day change
+  today: {
+    sessions: number;
+    costUSD: number;
+    messages: number;
+    toolCalls: number;
+    filesTouched: number;
+    projects: string[];
+  };
+  allTime: {
+    sessions: number;
+    costUSD: number;
+    projects: number;
+  };
+}
+
 // ── JSON Output Types ──────────────────────────────────────
 
 export interface SessionJson {
