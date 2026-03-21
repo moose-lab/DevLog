@@ -6,6 +6,7 @@ import { KanbanColumn } from "./column";
 import { CreateTaskDialog } from "./create-task-dialog";
 import { TaskDetailDialog } from "./task-detail-dialog";
 import { useTasks } from "@/hooks/use-tasks";
+import { useTaskSessions } from "@/hooks/use-task-sessions";
 import type { Task, TaskStatus } from "@/core/types-dashboard";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -13,6 +14,7 @@ const COLUMNS: TaskStatus[] = ["todo", "in_progress", "done"];
 
 export function KanbanBoard() {
   const { loading, tasksByStatus, createTask, updateTask, deleteTask, reorder } = useTasks();
+  const taskSessions = useTaskSessions();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 
@@ -52,7 +54,6 @@ export function KanbanBoard() {
 
   const handleUpdateTask = async (id: string, data: Partial<Task>) => {
     await updateTask(id, data);
-    // Update the selected task with new data so the dialog reflects changes
     setSelectedTask((prev) => (prev?.id === id ? { ...prev, ...data } as Task : prev));
   };
 
@@ -106,6 +107,7 @@ export function KanbanBoard() {
               key={status}
               status={status}
               tasks={tasksByStatus(status)}
+              taskSessions={taskSessions}
               onDeleteTask={deleteTask}
               onClickTask={handleClickTask}
             />
