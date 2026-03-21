@@ -1,192 +1,141 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Plus, KanbanSquare } from "lucide-react";
+import { ConflictAlertBar } from "@/components/dashboard/conflict-alert-bar";
+import { TaskQuickView } from "@/components/dashboard/task-quick-view";
+import { MetricCard } from "@/components/dashboard/activity-metrics";
+import { VelocityChart } from "@/components/dashboard/velocity-chart";
+import { ActivityFeed } from "@/components/dashboard/activity-feed";
+import { ProjectProgress } from "@/components/dashboard/project-progress";
+import { useTasks } from "@/hooks/use-tasks";
+import { useLocks } from "@/hooks/use-locks";
+import { useTaskAnalytics } from "@/hooks/use-task-analytics";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Terminal,
-  KanbanSquare,
-  GitBranch,
-  DollarSign,
-  Rocket,
-  AlertTriangle,
-} from "lucide-react";
-import type { Session, Task, Worktree } from "@/core/types-dashboard";
-
-interface DashboardData {
-  sessions: Session[];
-  tasks: Task[];
-  worktrees: Worktree[];
-  conflicts: { file_path: string; worktree_a: string; worktree_b: string }[];
-}
 
 export default function DashboardPage() {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { tasks, loading, tasksByStatus } = useTasks();
+  const { conflicts } = useLocks();
+  const analytics = useTaskAnalytics(tasks);
 
-  useEffect(() => {
-    const fetchAll = async () => {
-      try {
-        const [sessionsRes, tasksRes, worktreesRes, locksRes] = await Promise.all([
-          fetch("/api/sessions"),
-          fetch("/api/tasks"),
-          fetch("/api/worktrees"),
-          fetch("/api/locks"),
-        ]);
-
-        const [sessions, tasks, worktrees, locksData] = await Promise.all([
-          sessionsRes.ok ? sessionsRes.json() : [],
-          tasksRes.ok ? tasksRes.json() : [],
-          worktreesRes.ok ? worktreesRes.json() : [],
-          locksRes.ok ? locksRes.json() : { locks: [], conflicts: [] },
-        ]);
-
-        setData({ sessions, tasks, worktrees, conflicts: locksData.conflicts });
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchAll();
-    const interval = setInterval(fetchAll, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  if (loading || !data) {
-    return (
-      <div className="space-y-6">
-        <div className="grid grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((i) => (
-            <Skeleton key={i} className="h-[100px] rounded-lg" />
-          ))}
-        </div>
-        <Skeleton className="h-[300px] rounded-lg" />
-      </div>
-    );
-  }
-
-  const runningSessions = data.sessions.filter((s) => s.status === "running").length;
-  const activeTasks = data.tasks.filter((t) => t.status === "in_progress").length;
+  const conflictFiles = conflicts.map((c) => c.file_path);
+  const sparklineData = analytics.dailyVelocity.map((d) => d.completed);
 
   return (
-    <div className="space-y-6">
-      {/* Stats row */}
-      <div className="grid grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Running Sessions
-            </CardTitle>
-            <Terminal className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{runningSessions}</div>
-            <p className="text-xs text-muted-foreground">
-              {data.sessions.length} total
-            </p>
-          </CardContent>
-        </Card>
+    <div className="flex flex-col gap-4 h-full">
+      {/* Conflict alert */}
+      {conflicts.length > 0 && (
+        <ConflictAlertBar
+          conflictCount={conflicts.length}
+          conflictFiles={conflictFiles}
+        />
+      )}
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Active Tasks
-            </CardTitle>
-            <KanbanSquare className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{activeTasks}</div>
-            <p className="text-xs text-muted-foreground">
-              {data.tasks.length} total
-            </p>
-          </CardContent>
-        </Card>
+      {/* Row 1 — PM Hero Metric Cards */}
+      {loading ? (
+        <div className="grid grid-cols-3 gap-4 shrink-0">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-[130px] rounded-xl" />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-4 shrink-0">
+          {/* Card 1: Completed Today */}
+          <MetricCard
+            label="Completed Today"
+            value={String(analytics.completedToday)}
+            unit={analytics.completedToday === 1 ? "task" : "tasks"}
+            accent="green"
+            sparkline={sparklineData}
+            badge={
+              analytics.completedThisWeek > 0
+                ? { text: `${analytics.completedThisWeek} this week`, tone: "green" }
+                : undefined
+            }
+          />
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Worktrees
-            </CardTitle>
-            <GitBranch className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{data.worktrees.length}</div>
-          </CardContent>
-        </Card>
+          {/* Card 2: In Progress */}
+          <MetricCard
+            label="In Progress"
+            value={String(analytics.inProgressTasks.length)}
+            unit={analytics.inProgressTasks.length === 1 ? "active" : "active"}
+            accent="blue"
+            sub={
+              analytics.inProgressTasks.length > 0
+                ? analytics.inProgressTasks.slice(0, 2).map((t) => ({
+                    label: t.worktree_name ?? "main",
+                    value: t.title.slice(0, 14) + (t.title.length > 14 ? "…" : ""),
+                  }))
+                : [{ label: "status", value: "Idle" }]
+            }
+          />
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Conflicts
-            </CardTitle>
-            <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{data.conflicts.length}</div>
-          </CardContent>
-        </Card>
+          {/* Card 3: At Risk */}
+          <MetricCard
+            label="At Risk"
+            value={String(analytics.stuckTasks.length)}
+            unit={analytics.stuckTasks.length === 1 ? "stuck task" : "stuck tasks"}
+            accent={analytics.stuckTasks.length > 0 ? "red" : "default"}
+            badge={
+              analytics.stuckTasks.length === 0
+                ? { text: "All clear", tone: "green" }
+                : { text: "Needs attention", tone: "red" }
+            }
+            sub={
+              analytics.stuckTasks.length > 0
+                ? analytics.stuckTasks.slice(0, 2).map((t) => ({
+                    label: "stuck 48h+",
+                    value: t.title.slice(0, 14) + (t.title.length > 14 ? "…" : ""),
+                  }))
+                : undefined
+            }
+          />
+        </div>
+      )}
+
+      {/* Row 2 — Project Progress Bar */}
+      {!loading && analytics.totalTasks > 0 && (
+        <div className="shrink-0">
+          <ProjectProgress
+            totalTasks={analytics.totalTasks}
+            doneTasks={analytics.doneTasks}
+            inProgressCount={analytics.inProgressTasks.length}
+            progressPct={analytics.progressPct}
+            estimatedDaysLeft={analytics.estimatedDaysLeft}
+            avgVelocity={analytics.avgVelocity}
+          />
+        </div>
+      )}
+
+      {/* Row 3 — Velocity + Activity Feed */}
+      <div className="grid grid-cols-2 gap-4 shrink-0" style={{ minHeight: 220 }}>
+        <VelocityChart data={analytics.dailyVelocity} />
+        <ActivityFeed activities={analytics.recentActivity} />
       </div>
 
-      {/* Quick actions */}
-      <div className="flex gap-2">
-        <Link href="/sessions">
+      {/* Row 4 — Full Task Board */}
+      <div className="flex-1 min-h-0 overflow-hidden rounded-xl border bg-card">
+        <div className="h-full p-4 flex flex-col">
+          <TaskQuickView />
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="flex gap-2 shrink-0">
+        <Link href="/tasks">
           <Button size="sm">
-            <Rocket className="h-4 w-4 mr-1" />
-            Launch Session
+            <Plus className="h-4 w-4 mr-1" />
+            New Task
           </Button>
         </Link>
         <Link href="/tasks">
           <Button size="sm" variant="outline">
             <KanbanSquare className="h-4 w-4 mr-1" />
-            View Board
+            Full Board
           </Button>
         </Link>
       </div>
-
-      {/* Recent sessions */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Recent Sessions</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {data.sessions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No sessions yet.</p>
-          ) : (
-            <div className="space-y-2">
-              {data.sessions.slice(0, 10).map((session) => (
-                <Link
-                  key={session.id}
-                  href={`/sessions/${session.id}`}
-                  className="flex items-center justify-between rounded-md p-2 hover:bg-muted transition-colors"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="flex items-center gap-1.5">
-                      <span
-                        className={`h-2 w-2 rounded-full ${
-                          session.status === "running"
-                            ? "bg-green-500"
-                            : session.status === "failed"
-                              ? "bg-red-500"
-                              : "bg-gray-500"
-                        }`}
-                      />
-                    </span>
-                    <span className="text-sm truncate">
-                      {session.prompt?.slice(0, 60) ?? session.id.slice(0, 12)}
-                    </span>
-                  </div>
-                  <Badge variant="secondary" className="text-[10px] shrink-0">
-                    {session.status}
-                  </Badge>
-                </Link>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }
