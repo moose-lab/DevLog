@@ -3,7 +3,7 @@
 import { Droppable } from "@hello-pangea/dnd";
 import { TaskCard } from "./task-card";
 import { Badge } from "@/components/ui/badge";
-import type { Task, TaskStatus } from "@/core/types-dashboard";
+import type { Task, TaskStatus, Session } from "@/core/types-dashboard";
 import { cn } from "@/core/dashboard-utils";
 
 const COLUMN_CONFIG: Record<TaskStatus, { label: string; color: string }> = {
@@ -15,11 +15,12 @@ const COLUMN_CONFIG: Record<TaskStatus, { label: string; color: string }> = {
 interface KanbanColumnProps {
   status: TaskStatus;
   tasks: Task[];
+  taskSessions?: Map<string, Session>;
   onDeleteTask: (id: string) => void;
   onClickTask: (task: Task) => void;
 }
 
-export function KanbanColumn({ status, tasks, onDeleteTask, onClickTask }: KanbanColumnProps) {
+export function KanbanColumn({ status, tasks, taskSessions, onDeleteTask, onClickTask }: KanbanColumnProps) {
   const config = COLUMN_CONFIG[status];
 
   return (
@@ -46,6 +47,7 @@ export function KanbanColumn({ status, tasks, onDeleteTask, onClickTask }: Kanba
                 key={task.id}
                 task={task}
                 index={index}
+                session={taskSessions?.get(task.id)}
                 onDelete={onDeleteTask}
                 onClick={onClickTask}
               />
