@@ -21,13 +21,29 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const NAV_ITEMS = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/tasks", label: "Tasks", icon: KanbanSquare },
-  { href: "/sessions", label: "Sessions", icon: Terminal },
-  { href: "/worktrees", label: "Worktrees", icon: GitBranch },
-  { href: "/locks", label: "Locks", icon: Lock },
-  { href: "/devlog", label: "DevLog", icon: BarChart3 },
+const NAV_SECTIONS = [
+  {
+    label: "OVERVIEW",
+    items: [{ href: "/", label: "Activity", icon: LayoutDashboard }],
+  },
+  {
+    label: "WORK",
+    items: [
+      { href: "/tasks", label: "Tasks", icon: KanbanSquare },
+      { href: "/sessions", label: "AI Work Log", icon: Terminal },
+    ],
+  },
+  {
+    label: "BRANCHES",
+    items: [
+      { href: "/worktrees", label: "Workspaces", icon: GitBranch },
+      { href: "/locks", label: "Conflicts", icon: Lock },
+    ],
+  },
+  {
+    label: "ANALYTICS",
+    items: [{ href: "/devlog", label: "Cost & Usage", icon: BarChart3 }],
+  },
 ] as const;
 
 export function Sidebar() {
@@ -63,26 +79,33 @@ export function Sidebar() {
           </div>
         )}
       </div>
-      <nav className="flex-1 space-y-1 p-2">
-        {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
-          const isActive =
-            href === "/" ? pathname === "/" : pathname.startsWith(href);
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                isActive
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-              )}
-            >
-              <Icon className="h-4 w-4" />
-              {label}
-            </Link>
-          );
-        })}
+      <nav className="flex-1 p-2 space-y-0.5">
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.label}>
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground/50 px-3 py-1 mt-3 first:mt-1">
+              {section.label}
+            </p>
+            {section.items.map(({ href, label, icon: Icon }) => {
+              const isActive =
+                href === "/" ? pathname === "/" : pathname.startsWith(href);
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  className={cn(
+                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    isActive
+                      ? "border-l-2 border-sidebar-primary bg-sidebar-accent text-sidebar-accent-foreground pl-[10px]"
+                      : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  {label}
+                </Link>
+              );
+            })}
+          </div>
+        ))}
       </nav>
       <div className="border-t border-border p-3 text-xs text-muted-foreground">
         Port 3333 &middot; Local Only
