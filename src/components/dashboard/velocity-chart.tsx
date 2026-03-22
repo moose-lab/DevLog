@@ -4,17 +4,17 @@ import {
   BarChart,
   Bar,
   XAxis,
-  YAxis,
-  CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
+  Cell,
+  LabelList,
 } from "recharts";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { cn } from "@/core/dashboard-utils";
 import type { DailyTaskCount } from "@/hooks/use-task-analytics";
 
 interface VelocityChartProps {
   data: DailyTaskCount[];
+  className?: string;
 }
 
 function CustomTooltip({
@@ -27,89 +27,100 @@ function CustomTooltip({
   label?: string;
 }) {
   if (!active || !payload?.length) return null;
-  const current = payload.find((p) => p.dataKey === "completed")?.value ?? 0;
-  const prev = payload.find((p) => p.dataKey === "prevCompleted")?.value ?? 0;
+  const current = payload[0]?.value ?? 0;
   return (
-    <div className="rounded-lg border border-border bg-popover px-3 py-2 shadow-md text-xs">
-      <p className="font-medium mb-1">{label}</p>
-      <p className="text-muted-foreground">
-        This week:{" "}
-        <span className="text-foreground font-semibold">{current} tasks</span>
-      </p>
-      <p className="text-muted-foreground">
-        Last week:{" "}
-        <span className="text-foreground font-semibold">{prev} tasks</span>
+    <div className="glass-card px-3 py-2 shadow-xl !border-white/10 text-xs">
+      <p className="font-semibold text-zinc-200">{label}</p>
+      <p className="text-emerald-400 mt-0.5">
+        <span
+          className="font-semibold tabular-nums"
+          style={{ fontFamily: "var(--font-jetbrains), monospace" }}
+        >
+          {current}
+        </span>{" "}
+        tasks completed
       </p>
     </div>
   );
 }
 
-export function VelocityChart({ data }: VelocityChartProps) {
-  const hasData = data.some((d) => d.completed > 0 || d.prevCompleted > 0);
+export function VelocityChart({ data, className }: VelocityChartProps) {
+  const hasData = data.some((d) => d.completed > 0);
 
   return (
-    <Card className="h-full">
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <p className="text-xs uppercase tracking-widest text-muted-foreground font-medium">
+    <div
+      className={cn(
+        "glass-card flex flex-col overflow-hidden h-full",
+        className
+      )}
+    >
+      {/* Header */}
+      <div className="px-5 pt-4">
+        <span className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-300">
           Task Velocity
-        </p>
-        <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-          <span className="flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-sm bg-primary" />
-            This week
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block h-2 w-2 rounded-sm bg-muted-foreground/30" />
-            Last week
-          </span>
-        </div>
-      </CardHeader>
-      <CardContent className="pb-4">
+        </span>
+      </div>
+
+      {/* Chart */}
+      <div className="flex-1 px-3 pb-3 pt-2 min-h-0">
         {!hasData ? (
-          <div className="h-36 flex items-center justify-center text-sm text-muted-foreground">
-            No completed tasks yet this week
+          <div className="h-full flex items-center justify-center text-sm text-zinc-600">
+            No completed tasks yet
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={144}>
+          <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={data}
-              margin={{ top: 4, right: 4, bottom: 0, left: -20 }}
-              barCategoryGap="30%"
+              margin={{ top: 24, right: 8, bottom: 0, left: 8 }}
             >
-              <CartesianGrid
-                strokeDasharray="3 3"
-                stroke="hsl(var(--border))"
-                vertical={false}
-              />
               <XAxis
                 dataKey="date"
-                tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                tick={{
+                  fontSize: 10,
+                  fill: "#52525b",
+                }}
                 tickLine={false}
                 axisLine={false}
               />
-              <YAxis
-                allowDecimals={false}
-                tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                tickLine={false}
-                axisLine={false}
-              />
-              <Tooltip content={<CustomTooltip />} cursor={{ fill: "hsl(var(--accent))" }} />
-              <Bar
-                dataKey="prevCompleted"
-                fill="hsl(var(--muted-foreground) / 0.2)"
-                radius={[3, 3, 0, 0]}
-                maxBarSize={20}
+              <Tooltip
+                content={<CustomTooltip />}
+                cursor={{ fill: "rgba(255,255,255,0.03)" }}
               />
               <Bar
                 dataKey="completed"
-                fill="hsl(var(--primary))"
-                radius={[3, 3, 0, 0]}
-                maxBarSize={20}
-              />
+                radius={[4, 4, 0, 0]}
+                maxBarSize={36}
+              >
+                {data.map((entry, i) => (
+                  <Cell
+                    key={i}
+                    fill={
+                      entry.completed > 0
+                        ? "#34d399"
+                        : "rgba(255,255,255,0.04)"
+                    }
+                    fillOpacity={entry.completed > 0 ? 0.8 : 1}
+                  />
+                ))}
+                <LabelList
+                  dataKey="completed"
+                  position="top"
+                  formatter={(val: unknown) => {
+                    const n = Number(val);
+                    return n > 0 ? n : "";
+                  }}
+                  style={{
+                    fontSize: 11,
+                    fill: "#34d399",
+                    fontWeight: 700,
+                    fontFamily: "var(--font-jetbrains), monospace",
+                  }}
+                />
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
