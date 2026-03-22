@@ -15,10 +15,10 @@ export function ConflictAlertBar({ conflictCount, conflictFiles }: ConflictAlert
   if (conflictCount === 0 || dismissed) return null;
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-2.5 text-sm">
-      <AlertTriangle className="h-4 w-4 text-red-500 shrink-0" />
+    <div className="flex items-center gap-3 rounded-xl border border-rose-500/30 bg-rose-500/[0.07] px-4 py-2.5 text-sm backdrop-blur-sm">
+      <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0" />
       <div className="flex-1 min-w-0">
-        <span className="font-medium text-red-400">
+        <span className="font-medium text-rose-300">
           {conflictCount} file conflict{conflictCount !== 1 ? "s" : ""} detected
         </span>
         {conflictFiles.length > 0 && (

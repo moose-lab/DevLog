@@ -15,16 +15,16 @@ import { cn } from "@/core/dashboard-utils";
 const QUICK_COLUMNS: TaskStatus[] = ["todo", "in_progress"];
 
 const COLUMN_CONFIG: Record<TaskStatus, { label: string; dot: string }> = {
-  todo: { label: "Todo", dot: "bg-slate-500" },
-  in_progress: { label: "In Progress", dot: "bg-blue-500" },
-  done: { label: "Done", dot: "bg-green-500" },
+  todo: { label: "Todo", dot: "bg-zinc-500" },
+  in_progress: { label: "In Progress", dot: "bg-sky-500" },
+  done: { label: "Done", dot: "bg-emerald-500" },
 };
 
 const PRIORITY_COLORS: Record<string, string> = {
-  low: "bg-slate-500/20 text-slate-400 border-slate-500/30",
-  medium: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-  high: "bg-orange-500/20 text-orange-400 border-orange-500/30",
-  critical: "bg-red-500/20 text-red-400 border-red-500/30",
+  low: "bg-zinc-500/15 text-zinc-400 border-zinc-500/25",
+  medium: "bg-sky-500/15 text-sky-400 border-sky-500/25",
+  high: "bg-amber-500/15 text-amber-400 border-amber-500/25",
+  critical: "bg-rose-500/15 text-rose-400 border-rose-500/25",
 };
 
 function MiniTaskCard({
@@ -44,8 +44,8 @@ function MiniTaskCard({
           {...provided.draggableProps}
           {...provided.dragHandleProps}
           className={cn(
-            "rounded-md border border-border bg-card p-2.5 space-y-1.5 cursor-grab active:cursor-grabbing hover:border-primary/30 transition-colors",
-            snapshot.isDragging && "ring-2 ring-primary shadow-lg"
+            "rounded-lg border border-white/[0.06] bg-white/[0.03] p-2.5 space-y-1.5 cursor-grab active:cursor-grabbing hover:border-white/[0.12] transition-all",
+            snapshot.isDragging && "ring-2 ring-sky-500/40 shadow-lg shadow-sky-500/10"
           )}
           onClick={() => onClick(task)}
         >
@@ -147,11 +147,16 @@ export function TaskQuickView() {
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 mb-3">
-        <KanbanSquare className="h-4 w-4 text-muted-foreground" />
-        <h2 className="text-sm font-semibold">Tasks</h2>
-        <Badge variant="secondary" className="text-xs">
+        <KanbanSquare className="h-4 w-4 text-zinc-500" />
+        <span className="text-[11px] uppercase tracking-[0.15em] text-zinc-500 font-medium">
+          Tasks
+        </span>
+        <span
+          className="text-[10px] font-medium text-zinc-400 tabular-nums px-1.5 py-0.5 rounded-md bg-white/[0.06]"
+          style={{ fontFamily: "var(--font-jetbrains), monospace" }}
+        >
           {activeTasks.length}
-        </Badge>
+        </span>
         <div className="ml-auto">
           <CreateTaskDialog onSubmit={createTask} />
         </div>
@@ -168,10 +173,10 @@ export function TaskQuickView() {
               const colTasks = tasksByStatus(status);
               const config = COLUMN_CONFIG[status];
               return (
-                <div key={status} className="flex flex-col rounded-lg bg-muted/50 min-h-0">
-                  <div className="flex items-center gap-2 px-3 py-2 border-b border-border shrink-0">
+                <div key={status} className="flex flex-col rounded-lg bg-white/[0.02] border border-white/[0.04] min-h-0">
+                  <div className="flex items-center gap-2 px-3 py-2 border-b border-white/[0.06] shrink-0">
                     <span className={cn("h-2 w-2 rounded-full", config.dot)} />
-                    <span className="text-xs font-medium">{config.label}</span>
+                    <span className="text-xs font-medium text-zinc-400">{config.label}</span>
                     <Badge variant="secondary" className="ml-auto text-[10px]">
                       {colTasks.length}
                     </Badge>
@@ -184,7 +189,7 @@ export function TaskQuickView() {
                           {...provided.droppableProps}
                           className={cn(
                             "space-y-1.5 p-2 min-h-[120px] transition-colors",
-                            snapshot.isDraggingOver && "bg-accent/50"
+                            snapshot.isDraggingOver && "bg-sky-500/5"
                           )}
                         >
                           {colTasks.map((task, index) => (
