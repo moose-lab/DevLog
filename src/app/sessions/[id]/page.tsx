@@ -3,16 +3,28 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { SessionChat } from "@/components/sessions/session-chat";
+import { SessionVcc } from "@/components/sessions/session-vcc";
 import { ProcessIndicator } from "@/components/sessions/process-indicator";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Square, Trash2, GitBranch } from "lucide-react";
+import {
+  ArrowLeft,
+  Square,
+  Trash2,
+  GitBranch,
+  MessageSquare,
+  Eye,
+} from "lucide-react";
+import { cn } from "@/core/dashboard-utils";
 import type { Session } from "@/core/types-dashboard";
+
+type DetailTab = "chat" | "observe";
 
 export default function SessionDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [session, setSession] = useState<Session | null>(null);
+  const [tab, setTab] = useState<DetailTab>("chat");
 
   useEffect(() => {
     const fetchSession = () => {
@@ -50,11 +62,14 @@ export default function SessionDetailPage() {
   }
 
   const isActive = session.status === "running" || session.status === "idle";
-  const isEnded = session.status === "completed" || session.status === "failed" || session.status === "killed";
+  const isEnded =
+    session.status === "completed" ||
+    session.status === "failed" ||
+    session.status === "killed";
 
   return (
     <div className="flex flex-col h-[calc(100vh-120px)] gap-2">
-      {/* Compact header */}
+      {/* Header */}
       <div className="shrink-0 flex items-center gap-3">
         <Button
           variant="ghost"
@@ -83,22 +98,60 @@ export default function SessionDetailPage() {
             )}
           </div>
         </div>
+
+        {/* Tab switcher */}
+        <div className="flex items-center gap-0.5 bg-muted rounded-md p-0.5">
+          <Button
+            variant={tab === "chat" ? "secondary" : "ghost"}
+            size="sm"
+            className="h-7 text-xs gap-1"
+            onClick={() => setTab("chat")}
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            Chat
+          </Button>
+          <Button
+            variant={tab === "observe" ? "secondary" : "ghost"}
+            size="sm"
+            className="h-7 text-xs gap-1"
+            onClick={() => setTab("observe")}
+          >
+            <Eye className="h-3.5 w-3.5" />
+            Observe
+          </Button>
+        </div>
+
         <div className="flex items-center gap-1">
           {isActive && (
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={handleKill}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-destructive"
+              onClick={handleKill}
+            >
               <Square className="h-4 w-4" />
             </Button>
           )}
           {isEnded && (
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={handleDelete}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-destructive"
+              onClick={handleDelete}
+            >
               <Trash2 className="h-4 w-4" />
             </Button>
           )}
         </div>
       </div>
 
-      {/* Chat fills remaining space */}
-      <SessionChat sessionId={params.id} isActive={isActive} />
+      {/* Tab content */}
+      <div className={cn("flex-1 min-h-0", tab !== "chat" && "hidden")}>
+        <SessionChat sessionId={params.id} isActive={isActive} />
+      </div>
+      <div className={cn("flex-1 min-h-0", tab !== "observe" && "hidden")}>
+        <SessionVcc sessionId={params.id} isActive={isActive} />
+      </div>
     </div>
   );
 }
