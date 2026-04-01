@@ -3,6 +3,7 @@ import * as readline from "readline";
 import fs from "fs";
 import { getDb } from "./db";
 import { streamManager, type ToolCall } from "./stream-manager";
+import { onSessionExit } from "./task-lifecycle";
 
 // Resolve claude binary path once at module load
 let claudeBin = "claude";
@@ -201,6 +202,11 @@ class ProcessManager {
       }
 
       streamManager.emit(sessionId, { type: "status", status: "idle" });
+
+      // Auto-transition linked task based on session outcome
+      onSessionExit(sessionId).catch(() => {
+        // non-fatal: task transition failure shouldn't crash the process manager
+      });
 
       // If there are queued messages, spawn new process and continue
       const queue = this.messageQueues.get(sessionId);

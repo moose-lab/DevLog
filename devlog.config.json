@@ -1,6 +1,12 @@
 {
   "projects": [
     {
+      "id": "devlog",
+      "name": "DevLog",
+      "path": "/Users/moose/Moose/DevLog",
+      "defaultBranch": "main"
+    },
+    {
       "id": "videoclaw",
       "name": "VideoClaw",
       "path": "/Users/moose/Moose/videoclaw",

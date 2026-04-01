@@ -9,6 +9,7 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-jetbrains);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -123,4 +124,86 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* ── Signal Design System ─────────────────────────────── */
+
+/* Grain texture overlay */
+.grain-overlay::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0.028;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 256px 256px;
+}
+
+/* Shimmer animation for progress bars */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-shimmer {
+  animation: shimmer 3s ease-in-out infinite;
+}
+
+/* Staggered fade-in entrance */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Glow pulse for active indicators */
+@keyframes glow-ring {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; }
+  50% { box-shadow: 0 0 0 4px currentColor; }
+}
+
+.animate-glow-ring {
+  animation: glow-ring 2.5s ease-in-out infinite;
+}
+
+/* Glass card base */
+.glass-card {
+  border-radius: 1rem;
+  border: 1px solid oklch(1 0 0 / 6%);
+  background: oklch(1 0 0 / 3%);
+  backdrop-filter: blur(12px);
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.glass-card:hover {
+  border-color: oklch(1 0 0 / 10%);
+  background: oklch(1 0 0 / 5%);
+}
+
+/* Metric value glow */
+.metric-glow-green {
+  text-shadow: 0 0 20px oklch(0.7 0.2 155 / 30%);
+}
+.metric-glow-blue {
+  text-shadow: 0 0 20px oklch(0.6 0.2 240 / 30%);
+}
+.metric-glow-red {
+  text-shadow: 0 0 20px oklch(0.6 0.2 25 / 30%);
+}
+.metric-glow-amber {
+  text-shadow: 0 0 20px oklch(0.7 0.2 80 / 30%);
+}
+.metric-glow-sky {
+  text-shadow: 0 0 20px oklch(0.7 0.2 220 / 30%);
 }
