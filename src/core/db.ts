@@ -62,6 +62,36 @@ export function getDb(): Database.Database {
     }
   }
 
+  // Migrate: update tasks CHECK constraint to include 'review' and 'blocked'
+  try {
+    _db.exec("UPDATE tasks SET status = 'review' WHERE status = 'review'");
+  } catch {
+    // CHECK constraint fails — recreate table with expanded constraint
+    _db.exec(`
+      CREATE TABLE IF NOT EXISTS tasks_new (
+        id TEXT PRIMARY KEY DEFAULT (hex(randomblob(8))),
+        project_id TEXT NOT NULL DEFAULT 'videoclaw',
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo', 'in_progress', 'review', 'blocked', 'done')),
+        priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('low', 'medium', 'high', 'critical')),
+        worktree_name TEXT,
+        session_id TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        prompt TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at TEXT
+      );
+      INSERT OR IGNORE INTO tasks_new SELECT * FROM tasks;
+      DROP TABLE tasks;
+      ALTER TABLE tasks_new RENAME TO tasks;
+      CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+      CREATE INDEX IF NOT EXISTS idx_tasks_sort ON tasks(status, sort_order);
+      CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id, status);
+    `);
+  }
+
   // Recover orphaned sessions on first access
   if (!_recovered) {
     _recovered = true;
