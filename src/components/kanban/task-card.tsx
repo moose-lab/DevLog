@@ -5,7 +5,7 @@ import { Draggable } from "@hello-pangea/dnd";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Trash2, GitBranch, Terminal, ChevronRight } from "lucide-react";
+import { Trash2, GitBranch, Terminal, ChevronRight, Play } from "lucide-react";
 import type { Task, Session } from "@/core/types-dashboard";
 import { cn } from "@/core/dashboard-utils";
 import dayjs from "dayjs";
@@ -36,9 +36,10 @@ interface TaskCardProps {
   session?: Session;
   onDelete: (id: string) => void;
   onClick: (task: Task) => void;
+  onExecute?: (id: string) => void;
 }
 
-export function TaskCard({ task, index, session, onDelete, onClick }: TaskCardProps) {
+export function TaskCard({ task, index, session, onDelete, onClick, onExecute }: TaskCardProps) {
   const router = useRouter();
   const isLive = session?.status === "running" || session?.status === "idle";
 
@@ -60,6 +61,20 @@ export function TaskCard({ task, index, session, onDelete, onClick }: TaskCardPr
               {task.title}
             </span>
             <div className="flex items-center gap-0.5 shrink-0">
+              {onExecute && (task.status === "todo" || task.status === "blocked") && task.prompt && !session && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-muted-foreground hover:text-green-500"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onExecute(task.id);
+                  }}
+                  title="Launch agent"
+                >
+                  <Play className="h-3 w-3" />
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
