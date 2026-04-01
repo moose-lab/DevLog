@@ -17,6 +17,8 @@ const QUICK_COLUMNS: TaskStatus[] = ["todo", "in_progress"];
 const COLUMN_CONFIG: Record<TaskStatus, { label: string; dot: string }> = {
   todo: { label: "Todo", dot: "bg-zinc-500" },
   in_progress: { label: "In Progress", dot: "bg-sky-500" },
+  review: { label: "Review", dot: "bg-purple-500" },
+  blocked: { label: "Blocked", dot: "bg-red-500" },
   done: { label: "Done", dot: "bg-emerald-500" },
 };
 
