@@ -42,6 +42,8 @@ const PRIORITY_COLORS: Record<string, string> = {
 const STATUS_LABELS: Record<TaskStatus, string> = {
   todo: "Todo",
   in_progress: "In Progress",
+  review: "Review",
+  blocked: "Blocked",
   done: "Done",
 };
 
