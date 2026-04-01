@@ -114,3 +114,29 @@ export async function getWorktreeFilesChanged(name: string, projectId?: string):
     return 0;
   }
 }
+
+/**
+ * Get the full diff of a worktree's branch against a base branch.
+ */
+export async function getWorktreeBranchDiff(
+  name: string,
+  baseBranch: string,
+  projectId?: string
+): Promise<{ stat: string; diff: string }> {
+  const worktrees = await listWorktrees(projectId);
+  const wt = worktrees.find((w) => w.name === name);
+  if (!wt) throw new Error(`Worktree '${name}' not found`);
+
+  const [statResult, diffResult] = await Promise.all([
+    execFileAsync("git", ["diff", `${baseBranch}...HEAD`, "--stat"], {
+      cwd: wt.path,
+      maxBuffer: 5 * 1024 * 1024,
+    }),
+    execFileAsync("git", ["diff", `${baseBranch}...HEAD`], {
+      cwd: wt.path,
+      maxBuffer: 10 * 1024 * 1024,
+    }),
+  ]);
+
+  return { stat: statResult.stdout, diff: diffResult.stdout };
+}
