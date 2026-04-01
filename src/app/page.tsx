@@ -1,192 +1,230 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useState, useEffect, useMemo } from "react";
+import { ConflictAlertBar } from "@/components/dashboard/conflict-alert-bar";
 import {
-  Terminal,
-  KanbanSquare,
-  GitBranch,
-  DollarSign,
-  Rocket,
-  AlertTriangle,
-} from "lucide-react";
-import type { Session, Task, Worktree } from "@/core/types-dashboard";
+  BuildVelocityCard,
+  ActiveSessionsCard,
+  AtRiskCard,
+} from "@/components/dashboard/activity-metrics";
+import { VelocityChart } from "@/components/dashboard/velocity-chart";
+import { ActivityFeed } from "@/components/dashboard/activity-feed";
+import { ProjectProgress } from "@/components/dashboard/project-progress";
+import { CommandStream } from "@/components/dashboard/command-stream";
+import { CostCard } from "@/components/dashboard/cost-card";
+import { useTasks } from "@/hooks/use-tasks";
+import { useLocks } from "@/hooks/use-locks";
+import { useTaskAnalytics } from "@/hooks/use-task-analytics";
+import { useSessions } from "@/hooks/use-sessions";
+import { useDevlog } from "@/hooks/use-devlog";
+import { useProjects } from "@/hooks/use-projects";
+import { Skeleton } from "@/components/ui/skeleton";
 
-interface DashboardData {
-  sessions: Session[];
-  tasks: Task[];
-  worktrees: Worktree[];
-  conflicts: { file_path: string; worktree_a: string; worktree_b: string }[];
-}
-
-export default function DashboardPage() {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
+/* ── Live session timer ──────────────────────────────── */
+function useSessionTimer(
+  sessions: { status: string; started_at: string }[]
+) {
+  const [elapsed, setElapsed] = useState("--:--:--");
 
   useEffect(() => {
-    const fetchAll = async () => {
-      try {
-        const [sessionsRes, tasksRes, worktreesRes, locksRes] = await Promise.all([
-          fetch("/api/sessions"),
-          fetch("/api/tasks"),
-          fetch("/api/worktrees"),
-          fetch("/api/locks"),
-        ]);
+    const running = sessions.find((s) => s.status === "running");
+    if (!running) {
+      setElapsed("--:--:--");
+      return;
+    }
 
-        const [sessions, tasks, worktrees, locksData] = await Promise.all([
-          sessionsRes.ok ? sessionsRes.json() : [],
-          tasksRes.ok ? tasksRes.json() : [],
-          worktreesRes.ok ? worktreesRes.json() : [],
-          locksRes.ok ? locksRes.json() : { locks: [], conflicts: [] },
-        ]);
-
-        setData({ sessions, tasks, worktrees, conflicts: locksData.conflicts });
-      } finally {
-        setLoading(false);
-      }
+    const update = () => {
+      const diff = Date.now() - new Date(running.started_at).getTime();
+      const h = String(Math.floor(diff / 3600000)).padStart(2, "0");
+      const m = String(Math.floor((diff % 3600000) / 60000)).padStart(2, "0");
+      const s = String(Math.floor((diff % 60000) / 1000)).padStart(2, "0");
+      setElapsed(`${h}:${m}:${s}`);
     };
 
-    fetchAll();
-    const interval = setInterval(fetchAll, 5000);
+    update();
+    const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [sessions]);
 
-  if (loading || !data) {
-    return (
-      <div className="space-y-6">
-        <div className="grid grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((i) => (
-            <Skeleton key={i} className="h-[100px] rounded-lg" />
-          ))}
-        </div>
-        <Skeleton className="h-[300px] rounded-lg" />
-      </div>
+  return elapsed;
+}
+
+/* ── Dashboard Page ──────────────────────────────────── */
+export default function DashboardPage() {
+  const { tasks, loading } = useTasks();
+  const { conflicts } = useLocks();
+  const analytics = useTaskAnalytics(tasks);
+  const { sessions } = useSessions();
+  const { stats: devlogStats } = useDevlog();
+  const { projects, activeId } = useProjects();
+
+  const elapsed = useSessionTimer(sessions);
+
+  const activeProject = projects.find((p) => p.id === activeId);
+  const conflictFiles = conflicts.map((c) => c.file_path);
+
+  // Compute velocity comparison
+  const { pctVsLastWeek, dailyCompleted } = useMemo(() => {
+    const thisWeek = analytics.dailyVelocity.reduce(
+      (s, d) => s + d.completed,
+      0
     );
-  }
+    const lastWeek = analytics.dailyVelocity.reduce(
+      (s, d) => s + d.prevCompleted,
+      0
+    );
+    const pct =
+      lastWeek > 0
+        ? Math.round(((thisWeek - lastWeek) / lastWeek) * 100)
+        : 0;
+    return {
+      pctVsLastWeek: pct,
+      dailyCompleted: analytics.dailyVelocity.map((d) => d.completed),
+    };
+  }, [analytics.dailyVelocity]);
 
-  const runningSessions = data.sessions.filter((s) => s.status === "running").length;
-  const activeTasks = data.tasks.filter((t) => t.status === "in_progress").length;
+  // Build ID from latest session
+  const buildId =
+    sessions.length > 0
+      ? `#DL-${sessions[0].id.slice(0, 4).toUpperCase()}`
+      : "#DL-0000";
+
+  const monoFont =
+    "var(--font-jetbrains), var(--font-geist-mono), monospace";
 
   return (
-    <div className="space-y-6">
-      {/* Stats row */}
-      <div className="grid grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Running Sessions
-            </CardTitle>
-            <Terminal className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{runningSessions}</div>
-            <p className="text-xs text-muted-foreground">
-              {data.sessions.length} total
-            </p>
-          </CardContent>
-        </Card>
+    <div className="flex flex-col gap-4 h-full">
+      {/* Conflict alert */}
+      {conflicts.length > 0 && (
+        <ConflictAlertBar
+          conflictCount={conflicts.length}
+          conflictFiles={conflictFiles}
+        />
+      )}
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Active Tasks
-            </CardTitle>
-            <KanbanSquare className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{activeTasks}</div>
-            <p className="text-xs text-muted-foreground">
-              {data.tasks.length} total
-            </p>
-          </CardContent>
-        </Card>
+      {/* ── Header: TASK CENTER ─────────────────────────── */}
+      <div
+        className="flex items-start justify-between shrink-0 animate-fade-up"
+      >
+        <div>
+          <h1
+            className="text-2xl font-bold tracking-tight text-zinc-100"
+            style={{ fontFamily: monoFont }}
+          >
+            TASK CENTER
+          </h1>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            <span
+              className="text-[11px] text-zinc-500 uppercase tracking-[0.12em]"
+              style={{ fontFamily: monoFont }}
+            >
+              System Stable // {activeProject?.name || "DevLog"}
+            </span>
+          </div>
+        </div>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Worktrees
-            </CardTitle>
-            <GitBranch className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{data.worktrees.length}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              Conflicts
-            </CardTitle>
-            <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{data.conflicts.length}</div>
-          </CardContent>
-        </Card>
+        <div className="flex items-start gap-8">
+          <div className="text-right">
+            <span className="text-[10px] text-zinc-600 uppercase tracking-[0.12em] block font-medium">
+              Session Duration
+            </span>
+            <span
+              className="text-lg font-bold text-zinc-200 tabular-nums"
+              style={{ fontFamily: monoFont }}
+            >
+              {elapsed}
+            </span>
+          </div>
+          <div className="text-right">
+            <span className="text-[10px] text-zinc-600 uppercase tracking-[0.12em] block font-medium">
+              Build ID
+            </span>
+            <span
+              className="text-lg font-bold text-emerald-400 tabular-nums"
+              style={{ fontFamily: monoFont }}
+            >
+              {buildId}
+            </span>
+          </div>
+        </div>
       </div>
 
-      {/* Quick actions */}
-      <div className="flex gap-2">
-        <Link href="/sessions">
-          <Button size="sm">
-            <Rocket className="h-4 w-4 mr-1" />
-            Launch Session
-          </Button>
-        </Link>
-        <Link href="/tasks">
-          <Button size="sm" variant="outline">
-            <KanbanSquare className="h-4 w-4 mr-1" />
-            View Board
-          </Button>
-        </Link>
-      </div>
+      {/* ── Row 1: Three metric cards ───────────────────── */}
+      {loading ? (
+        <div className="grid grid-cols-[2fr_1.6fr_1fr] gap-4 shrink-0">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-[160px] rounded-2xl" />
+          ))}
+        </div>
+      ) : (
+        <div
+          className="grid grid-cols-[2fr_1.6fr_1fr] gap-4 shrink-0 animate-fade-up"
+          style={{ animationDelay: "60ms" }}
+        >
+          <BuildVelocityCard
+            completedThisWeek={analytics.completedThisWeek}
+            pctVsLastWeek={pctVsLastWeek}
+            dailyCompleted={dailyCompleted}
+          />
+          <ActiveSessionsCard sessions={sessions} tasks={tasks} />
+          <AtRiskCard
+            stuckCount={analytics.stuckTasks.length}
+            conflictCount={conflicts.length}
+          />
+        </div>
+      )}
 
-      {/* Recent sessions */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Recent Sessions</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {data.sessions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No sessions yet.</p>
-          ) : (
-            <div className="space-y-2">
-              {data.sessions.slice(0, 10).map((session) => (
-                <Link
-                  key={session.id}
-                  href={`/sessions/${session.id}`}
-                  className="flex items-center justify-between rounded-md p-2 hover:bg-muted transition-colors"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="flex items-center gap-1.5">
-                      <span
-                        className={`h-2 w-2 rounded-full ${
-                          session.status === "running"
-                            ? "bg-green-500"
-                            : session.status === "failed"
-                              ? "bg-red-500"
-                              : "bg-gray-500"
-                        }`}
-                      />
-                    </span>
-                    <span className="text-sm truncate">
-                      {session.prompt?.slice(0, 60) ?? session.id.slice(0, 12)}
-                    </span>
-                  </div>
-                  <Badge variant="secondary" className="text-[10px] shrink-0">
-                    {session.status}
-                  </Badge>
-                </Link>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* ── Row 2: Project Pulse ─────────────────────────── */}
+      {!loading && analytics.totalTasks > 0 && (
+        <div
+          className="shrink-0 animate-fade-up"
+          style={{ animationDelay: "120ms" }}
+        >
+          <ProjectProgress
+            totalTasks={analytics.totalTasks}
+            doneTasks={analytics.doneTasks}
+            inProgressCount={analytics.inProgressTasks.length}
+            progressPct={analytics.progressPct}
+            estimatedDaysLeft={analytics.estimatedDaysLeft}
+            avgVelocity={analytics.avgVelocity}
+          />
+        </div>
+      )}
+
+      {/* ── Row 3: Bottom two-column section ─────────────── */}
+      <div
+        className="grid grid-cols-[1.2fr_1fr] gap-4 flex-1 min-h-0 animate-fade-up"
+        style={{ animationDelay: "180ms" }}
+      >
+        {/* Left column: Velocity chart + Activity feed */}
+        <div className="flex flex-col gap-4 min-h-0">
+          <VelocityChart
+            data={analytics.dailyVelocity}
+            className="flex-1 min-h-0"
+          />
+          <ActivityFeed
+            activities={analytics.recentActivity}
+            className="flex-1 min-h-0"
+          />
+        </div>
+
+        {/* Right column: Command Stream + Cost card */}
+        <div className="flex flex-col gap-4 min-h-0">
+          <CommandStream
+            activities={analytics.recentActivity}
+            sessions={sessions}
+            stuckTasks={analytics.stuckTasks}
+            className="flex-[1.5] min-h-0"
+          />
+          <CostCard
+            stats={devlogStats}
+            totalTasks={analytics.totalTasks}
+            doneTasks={analytics.doneTasks}
+            className="shrink-0"
+          />
+        </div>
+      </div>
     </div>
   );
 }

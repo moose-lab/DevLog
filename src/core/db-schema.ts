@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   project_id TEXT NOT NULL DEFAULT 'videoclaw',
   title TEXT NOT NULL,
   description TEXT,
-  status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo', 'in_progress', 'done')),
+  status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo', 'in_progress', 'review', 'blocked', 'done')),
   priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('low', 'medium', 'high', 'critical')),
   worktree_name TEXT,
   session_id TEXT,

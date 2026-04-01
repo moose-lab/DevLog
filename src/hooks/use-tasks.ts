@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { Task, TaskStatus, TaskPriority } from "@/core/types-dashboard";
+import type { Task, TaskStatus, TaskPriority, Session } from "@/core/types-dashboard";
 
 export function useTasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -75,6 +75,15 @@ export function useTasks() {
   const tasksByStatus = (status: TaskStatus) =>
     tasks.filter((t) => t.status === status).sort((a, b) => a.sort_order - b.sort_order);
 
+  const executeTask = async (id: string): Promise<{ session: Session } | null> => {
+    const res = await fetch(`/api/tasks/${id}/execute`, { method: "POST" });
+    if (res.ok) {
+      await fetchTasks();
+      return await res.json();
+    }
+    return null;
+  };
+
   return {
     tasks,
     loading,
@@ -82,6 +91,7 @@ export function useTasks() {
     updateTask,
     deleteTask,
     reorder,
+    executeTask,
     tasksByStatus,
     refresh: fetchTasks,
   };

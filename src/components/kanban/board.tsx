@@ -1,20 +1,31 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { DragDropContext, type DropResult } from "@hello-pangea/dnd";
 import { KanbanColumn } from "./column";
 import { CreateTaskDialog } from "./create-task-dialog";
 import { TaskDetailDialog } from "./task-detail-dialog";
 import { useTasks } from "@/hooks/use-tasks";
+import { useTaskSessions } from "@/hooks/use-task-sessions";
 import type { Task, TaskStatus } from "@/core/types-dashboard";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const COLUMNS: TaskStatus[] = ["todo", "in_progress", "done"];
+const COLUMNS: TaskStatus[] = ["todo", "in_progress", "review", "blocked", "done"];
 
 export function KanbanBoard() {
-  const { loading, tasksByStatus, createTask, updateTask, deleteTask, reorder } = useTasks();
+  const { loading, tasksByStatus, createTask, updateTask, deleteTask, reorder, executeTask } = useTasks();
+  const taskSessions = useTaskSessions();
+  const router = useRouter();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+
+  const handleExecuteTask = async (taskId: string) => {
+    const result = await executeTask(taskId);
+    if (result?.session) {
+      router.push(`/sessions/${result.session.id}`);
+    }
+  };
 
   const handleDragEnd = async (result: DropResult) => {
     const { source, destination } = result;
@@ -52,7 +63,6 @@ export function KanbanBoard() {
 
   const handleUpdateTask = async (id: string, data: Partial<Task>) => {
     await updateTask(id, data);
-    // Update the selected task with new data so the dialog reflects changes
     setSelectedTask((prev) => (prev?.id === id ? { ...prev, ...data } as Task : prev));
   };
 
@@ -86,9 +96,9 @@ export function KanbanBoard() {
 
   if (loading) {
     return (
-      <div className="grid grid-cols-3 gap-4">
+      <div className="flex gap-4 overflow-x-auto pb-2">
         {COLUMNS.map((col) => (
-          <Skeleton key={col} className="h-[400px] rounded-lg" />
+          <Skeleton key={col} className="h-[400px] min-w-[240px] flex-1 rounded-lg" />
         ))}
       </div>
     );
@@ -100,14 +110,16 @@ export function KanbanBoard() {
         <CreateTaskDialog onSubmit={createTask} />
       </div>
       <DragDropContext onDragEnd={handleDragEnd}>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="flex gap-4 overflow-x-auto pb-2">
           {COLUMNS.map((status) => (
             <KanbanColumn
               key={status}
               status={status}
               tasks={tasksByStatus(status)}
+              taskSessions={taskSessions}
               onDeleteTask={deleteTask}
               onClickTask={handleClickTask}
+              onExecuteTask={handleExecuteTask}
             />
           ))}
         </div>

@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import type { Task, TaskPriority, TaskStatus, Worktree } from "@/core/types-dashboard";
 import { cn } from "@/core/dashboard-utils";
+import { TaskReviewPanel } from "./task-review-panel";
 
 const PRIORITY_COLORS: Record<string, string> = {
   low: "bg-slate-500/20 text-slate-400 border-slate-500/30",
@@ -42,6 +43,8 @@ const PRIORITY_COLORS: Record<string, string> = {
 const STATUS_LABELS: Record<TaskStatus, string> = {
   todo: "Todo",
   in_progress: "In Progress",
+  review: "Review",
+  blocked: "Blocked",
   done: "Done",
 };
 
@@ -359,6 +362,11 @@ export function TaskDetailDialog({
                 )}
               </Button>
             </div>
+          )}
+
+          {/* Review panel (when task is in review or blocked) */}
+          {(task.status === "review" || task.status === "blocked") && (
+            <TaskReviewPanel task={task} onUpdate={onUpdate} />
           )}
         </div>
       </DialogContent>
