@@ -19,6 +19,7 @@ export function getDb(): Database.Database {
   _db.pragma("journal_mode = WAL");
   _db.pragma("foreign_keys = ON");
   _db.exec(SCHEMA);
+  migrateTasksV2(_db);
 
   // Migrate: add claude_session_id column if missing
   try {
@@ -99,6 +100,54 @@ export function getDb(): Database.Database {
   }
 
   return _db;
+}
+
+export function migrateTasksV2(db: Database.Database): void {
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  const has = (n: string) => cols.some(c => c.name === n);
+
+  if (!has("blocked_by")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN blocked_by TEXT");
+  }
+  if (!has("sandbox_iterations")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN sandbox_iterations INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!has("fail_reason")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN fail_reason TEXT");
+  }
+
+  // Status CHECK widening: SQLite cannot ALTER CHECK; recreate the table only if old CHECK is detected.
+  const stmt = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get() as { sql: string } | undefined;
+  if (stmt && (!stmt.sql.includes("'in_queue'") || !stmt.sql.includes("'fail'"))) {
+    db.exec(`
+      CREATE TABLE tasks_new (
+        id TEXT PRIMARY KEY DEFAULT (hex(randomblob(8))),
+        project_id TEXT NOT NULL DEFAULT 'videoclaw',
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo', 'in_queue', 'in_progress', 'review', 'blocked', 'fail', 'done')),
+        priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('low', 'medium', 'high', 'critical')),
+        worktree_name TEXT,
+        session_id TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        prompt TEXT,
+        blocked_by TEXT,
+        sandbox_iterations INTEGER NOT NULL DEFAULT 0,
+        fail_reason TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at TEXT
+      );
+      INSERT INTO tasks_new (id, project_id, title, description, status, priority, worktree_name, session_id, sort_order, prompt, blocked_by, sandbox_iterations, fail_reason, created_at, updated_at, completed_at)
+      SELECT id, project_id, title, description, status, priority, worktree_name, session_id, sort_order, prompt, NULL, 0, NULL, created_at, updated_at, completed_at
+      FROM tasks;
+      DROP TABLE tasks;
+      ALTER TABLE tasks_new RENAME TO tasks;
+      CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+      CREATE INDEX IF NOT EXISTS idx_tasks_sort ON tasks(status, sort_order);
+      CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id, status);
+    `);
+  }
 }
 
 function recoverOrphanedSessions(db: Database.Database): void {
