@@ -47,3 +47,29 @@ test("acquire succeeds when same session re-acquires its own lock", () => {
   assert.equal(result.ok, true);
   // Duplicates ARE inserted (no UNIQUE constraint); v1 accepts them as harmless. Test only verifies the API returns ok.
 });
+
+test("release marks specific paths resolved", () => {
+  const db = makeTestDb();
+  const t = insertTask(db);
+  const s = insertSession(db, { task_id: t, worktree_name: "wt" });
+  const lm = createLockManager(db);
+
+  lm.acquire({ sessionId: s, worktreeName: "wt", projectId: "test", paths: ["a.ts", "b.ts"] });
+  lm.release(s, ["a.ts"]);
+
+  assert.equal(lm.whoHolds("a.ts"), null);
+  assert.equal(lm.whoHolds("b.ts"), s);
+});
+
+test("releaseAll resolves every path for a session", () => {
+  const db = makeTestDb();
+  const t = insertTask(db);
+  const s = insertSession(db, { task_id: t, worktree_name: "wt" });
+  const lm = createLockManager(db);
+
+  lm.acquire({ sessionId: s, worktreeName: "wt", projectId: "test", paths: ["a.ts", "b.ts"] });
+  lm.releaseAll(s);
+
+  assert.equal(lm.whoHolds("a.ts"), null);
+  assert.equal(lm.whoHolds("b.ts"), null);
+});
