@@ -25,6 +25,7 @@ export function createDbPool(opts: DbPoolOptions = {}): DbPool {
   const registryPath = opts.registryPath ?? DEFAULT_REGISTRY_PATH;
   let registryDb: Database.Database | null = null;
   const projectDbs = new Map<string, Database.Database>();
+  const maxOpen = opts.maxOpen ?? 8;
 
   function openRegistry(): Database.Database {
     mkdirSync(dirname(registryPath), { recursive: true });
@@ -36,6 +37,12 @@ export function createDbPool(opts: DbPoolOptions = {}): DbPool {
   }
 
   function openProjectDb(projectId: string, dbPath: string): Database.Database {
+    while (projectDbs.size >= maxOpen) {
+      const oldestKey = projectDbs.keys().next().value as string;
+      const oldestDb = projectDbs.get(oldestKey)!;
+      oldestDb.close();
+      projectDbs.delete(oldestKey);
+    }
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
@@ -53,7 +60,12 @@ export function createDbPool(opts: DbPoolOptions = {}): DbPool {
     },
     getProject(projectId) {
       const cached = projectDbs.get(projectId);
-      if (cached) return cached;
+      if (cached) {
+        // Refresh LRU: delete + re-insert places at end of Map iteration order
+        projectDbs.delete(projectId);
+        projectDbs.set(projectId, cached);
+        return cached;
+      }
       if (opts.resolveProjectDbPath) {
         return openProjectDb(projectId, opts.resolveProjectDbPath(projectId));
       }
