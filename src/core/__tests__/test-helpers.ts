@@ -1,5 +1,8 @@
 import Database from "better-sqlite3";
 import { SCHEMA } from "../db-schema";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 export function makeTestDb(): Database.Database {
   const db = new Database(":memory:");
@@ -54,4 +57,37 @@ export class FakeProcessManager {
   async pause(sessionId: string) {
     this.paused.push(sessionId);
   }
+}
+
+/**
+ * Creates a temporary directory simulating a project root.
+ * Optionally seeds .git/ to make it look like a real repo.
+ * Returns absolute path; caller is responsible for cleanup via removeTempDir.
+ */
+export function makeTempProjectDir(opts: { withGit?: boolean; withPackageJson?: boolean } = {}): string {
+  const dir = mkdtempSync(join(tmpdir(), "devlog-test-project-"));
+  if (opts.withGit) {
+    mkdirSync(join(dir, ".git"));
+    writeFileSync(join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
+  }
+  if (opts.withPackageJson) {
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "test-project" }));
+  }
+  return dir;
+}
+
+export function removeTempDir(dir: string): void {
+  rmSync(dir, { recursive: true, force: true });
+}
+
+/**
+ * Returns a registry-DB-only path within a temp dir, plus a cleanup function.
+ * Used for tests that need the actual file (not :memory:).
+ */
+export function makeTempRegistryPath(): { path: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), "devlog-test-registry-"));
+  return {
+    path: join(dir, "registry.sqlite"),
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
 }
