@@ -3,6 +3,8 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { REGISTRY_SCHEMA } from "./db-schema-registry";
+import { SCHEMA } from "./db-schema";
+import { migrateTasksV2 } from "./db";
 
 export interface DbPool {
   getRegistry(): Database.Database;
@@ -33,16 +35,37 @@ export function createDbPool(opts: DbPoolOptions = {}): DbPool {
     return db;
   }
 
+  function openProjectDb(projectId: string, dbPath: string): Database.Database {
+    mkdirSync(dirname(dbPath), { recursive: true });
+    const db = new Database(dbPath);
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    db.exec(SCHEMA);
+    migrateTasksV2(db);
+    projectDbs.set(projectId, db);
+    return db;
+  }
+
   return {
     getRegistry() {
       if (!registryDb) registryDb = openRegistry();
       return registryDb;
     },
-    getProject(_projectId) {
-      throw new Error("not implemented yet");  // Task 3.2
+    getProject(projectId) {
+      const cached = projectDbs.get(projectId);
+      if (cached) return cached;
+      if (opts.resolveProjectDbPath) {
+        return openProjectDb(projectId, opts.resolveProjectDbPath(projectId));
+      }
+      // Default: look up registry for project.path, then append /.devlog/devlog.db
+      const reg = this.getRegistry();
+      const row = reg.prepare("SELECT path FROM projects WHERE id = ?").get(projectId) as { path: string } | undefined;
+      if (!row) throw new Error(`Project not found in registry: ${projectId}`);
+      return openProjectDb(projectId, join(row.path, ".devlog", "devlog.db"));
     },
-    closeProject(_projectId) {
-      throw new Error("not implemented yet");  // Task 3.2
+    closeProject(projectId) {
+      const db = projectDbs.get(projectId);
+      if (db) { db.close(); projectDbs.delete(projectId); }
     },
     closeAll() {
       if (registryDb) { registryDb.close(); registryDb = null; }
