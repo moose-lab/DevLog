@@ -29,3 +29,63 @@ test("getRegistry returns same connection across calls (cached)", () => {
   pool.closeAll();
   cleanup();
 });
+
+import { join as pathJoin } from "node:path";
+import { existsSync as fileExists } from "node:fs";
+import { makeTempProjectDir, removeTempDir } from "./test-helpers";
+
+test("getProject creates .devlog/devlog.db inside the project path", () => {
+  const projectDir = makeTempProjectDir();
+  const { path: regPath, cleanup: regCleanup } = makeTempRegistryPath();
+  const pool = createDbPool({
+    registryPath: regPath,
+    resolveProjectDbPath: (id) => pathJoin(projectDir, ".devlog", "devlog.db"),
+  });
+
+  const db = pool.getProject("test-project");
+  assert.equal(fileExists(pathJoin(projectDir, ".devlog", "devlog.db")), true);
+
+  // Schema applied — tasks table exists:
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>;
+  assert.ok(tables.some(t => t.name === "tasks"));
+
+  pool.closeAll();
+  regCleanup();
+  removeTempDir(projectDir);
+});
+
+test("getProject caches connections per projectId", () => {
+  const projectDir = makeTempProjectDir();
+  const { path: regPath, cleanup: regCleanup } = makeTempRegistryPath();
+  const pool = createDbPool({
+    registryPath: regPath,
+    resolveProjectDbPath: () => pathJoin(projectDir, ".devlog", "devlog.db"),
+  });
+
+  const a = pool.getProject("p1");
+  const b = pool.getProject("p1");
+  assert.equal(a, b);
+
+  pool.closeAll();
+  regCleanup();
+  removeTempDir(projectDir);
+});
+
+test("closeProject closes and removes from cache", () => {
+  const projectDir = makeTempProjectDir();
+  const { path: regPath, cleanup: regCleanup } = makeTempRegistryPath();
+  const pool = createDbPool({
+    registryPath: regPath,
+    resolveProjectDbPath: () => pathJoin(projectDir, ".devlog", "devlog.db"),
+  });
+
+  const a = pool.getProject("p1");
+  pool.closeProject("p1");
+  // Re-opening should give a fresh connection (not the closed one):
+  const b = pool.getProject("p1");
+  assert.notEqual(a, b);
+
+  pool.closeAll();
+  regCleanup();
+  removeTempDir(projectDir);
+});
