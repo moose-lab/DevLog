@@ -89,3 +89,33 @@ test("closeProject closes and removes from cache", () => {
   regCleanup();
   removeTempDir(projectDir);
 });
+
+test("getProject evicts least-recently-used when maxOpen exceeded", () => {
+  const dir1 = makeTempProjectDir();
+  const dir2 = makeTempProjectDir();
+  const dir3 = makeTempProjectDir();
+  const { path: regPath, cleanup: regCleanup } = makeTempRegistryPath();
+  const dirs: Record<string, string> = { p1: dir1, p2: dir2, p3: dir3 };
+  const pool = createDbPool({
+    registryPath: regPath,
+    resolveProjectDbPath: (id) => pathJoin(dirs[id], ".devlog", "devlog.db"),
+    maxOpen: 2,
+  });
+
+  const a1 = pool.getProject("p1");
+  const a2 = pool.getProject("p2");
+  // p1 and p2 open; opening p3 should evict p1 (LRU — p1 was inserted before p2)
+  pool.getProject("p3");
+  // After eviction: map = {p2, p3}. Touch p2 to make p3 the LRU.
+  pool.getProject("p2");
+  // Re-opening p1 should evict p3 (LRU) and give a fresh connection
+  const a1Again = pool.getProject("p1");
+  assert.notEqual(a1, a1Again);
+  // p2 should still be the same connection (it was touched, making p3 the LRU instead)
+  const a2Again = pool.getProject("p2");
+  assert.equal(a2, a2Again);
+
+  pool.closeAll();
+  regCleanup();
+  for (const d of [dir1, dir2, dir3]) removeTempDir(d);
+});
