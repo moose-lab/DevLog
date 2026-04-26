@@ -1,3 +1,4 @@
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import type { DbPool } from "./db-pool";
 import type { ProjectRecord, ProjectCandidate } from "./types-project";
 
@@ -64,11 +65,36 @@ export function createRegistry(pool: DbPool): Registry {
     scan(_rootPath, _opts) {
       throw new Error("not implemented yet");  // Task 5.1
     },
-    syncFromConfigJson(_configPath) {
-      throw new Error("not implemented yet");  // Task 4.2
+    syncFromConfigJson(configPath) {
+      if (!existsSync(configPath)) return { added: [], skipped: [] };
+      const cfg = JSON.parse(readFileSync(configPath, "utf8")) as {
+        projects?: Array<{ id: string; name: string; path: string; defaultBranch?: string }>;
+      };
+      const added: string[] = [];
+      const skipped: string[] = [];
+      for (const p of cfg.projects ?? []) {
+        if (api.get(p.id)) {
+          skipped.push(p.id);
+          continue;
+        }
+        api.create({ id: p.id, name: p.name, path: p.path, defaultBranch: p.defaultBranch ?? "main" });
+        added.push(p.id);
+      }
+      return { added, skipped };
     },
-    syncToConfigJson(_configPath) {
-      throw new Error("not implemented yet");  // Task 4.2
+    syncToConfigJson(configPath) {
+      let existing: Record<string, unknown> = {};
+      if (existsSync(configPath)) {
+        existing = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      }
+      const projects = api.list().map(p => ({
+        id: p.id,
+        name: p.name,
+        path: p.path,
+        defaultBranch: p.defaultBranch,
+      }));
+      const next = { ...existing, projects };
+      writeFileSync(configPath, JSON.stringify(next, null, 2) + "\n");
     },
   };
   return api;

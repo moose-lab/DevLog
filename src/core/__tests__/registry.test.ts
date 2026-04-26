@@ -93,3 +93,65 @@ test("touchActive() updates lastActiveAt", () => {
   regCleanup();
   removeTempDir(projectDir);
 });
+
+import { writeFileSync, readFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+
+test("syncFromConfigJson registers projects from JSON, skips already-registered", () => {
+  const d1 = makeTempProjectDir();
+  const d2 = makeTempProjectDir();
+  const cfgDir = mkdtempSync(join(tmpdir(), "devlog-cfg-"));
+  const cfgPath = join(cfgDir, "devlog.config.json");
+  writeFileSync(cfgPath, JSON.stringify({
+    projects: [
+      { id: "alpha", name: "Alpha", path: d1, defaultBranch: "main" },
+      { id: "beta", name: "Beta", path: d2, defaultBranch: "main" },
+    ],
+    activeProject: "alpha",
+    port: 3333,
+  }));
+
+  const { path: regPath, cleanup: regCleanup } = makeTempRegistryPath();
+  const pool = createDbPool({ registryPath: regPath });
+  const registry = createRegistry(pool);
+
+  // First sync: both added
+  const r1 = registry.syncFromConfigJson(cfgPath);
+  assert.deepEqual(r1.added.sort(), ["alpha", "beta"]);
+  assert.deepEqual(r1.skipped, []);
+
+  // Second sync: both skipped
+  const r2 = registry.syncFromConfigJson(cfgPath);
+  assert.deepEqual(r2.added, []);
+  assert.deepEqual(r2.skipped.sort(), ["alpha", "beta"]);
+
+  pool.closeAll();
+  regCleanup();
+  removeTempDir(d1);
+  removeTempDir(d2);
+});
+
+test("syncToConfigJson writes registry projects back to JSON, preserves other fields", () => {
+  const d1 = makeTempProjectDir();
+  const cfgDir = mkdtempSync(join(tmpdir(), "devlog-cfg-"));
+  const cfgPath = join(cfgDir, "devlog.config.json");
+  writeFileSync(cfgPath, JSON.stringify({ projects: [], activeProject: "x", port: 9999 }));
+
+  const { path: regPath, cleanup: regCleanup } = makeTempRegistryPath();
+  const pool = createDbPool({ registryPath: regPath });
+  const registry = createRegistry(pool);
+
+  registry.create({ id: "alpha", name: "Alpha", path: d1, defaultBranch: "main" });
+  registry.syncToConfigJson(cfgPath);
+
+  const after = JSON.parse(readFileSync(cfgPath, "utf8"));
+  assert.equal(after.activeProject, "x");          // preserved
+  assert.equal(after.port, 9999);                   // preserved
+  assert.equal(after.projects.length, 1);
+  assert.equal(after.projects[0].id, "alpha");
+  assert.equal(after.projects[0].path, d1);
+
+  pool.closeAll();
+  regCleanup();
+  removeTempDir(d1);
+});
