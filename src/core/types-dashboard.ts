@@ -1,4 +1,4 @@
-export type TaskStatus = "todo" | "in_progress" | "review" | "blocked" | "done";
+export type TaskStatus = "todo" | "in_queue" | "in_progress" | "review" | "blocked" | "fail" | "done";
 export type TaskPriority = "low" | "medium" | "high" | "critical";
 
 export interface Task {
@@ -15,6 +15,9 @@ export interface Task {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  blocked_by?: string | null; // JSON array of task ids when status === 'in_queue'
+  sandbox_iterations?: number;
+  fail_reason?: string | null;
 }
 
 export type SessionStatus =
