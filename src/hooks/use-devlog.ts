@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { DevLogStats } from "@/core/types-dashboard";
+import { normalizeDevLogStats } from "@/core/devlog-dashboard";
 
 export function useDevlog() {
   const [stats, setStats] = useState<DevLogStats | null>(null);
@@ -11,7 +12,7 @@ export function useDevlog() {
     try {
       const res = await fetch("/api/devlog?command=stats");
       if (res.ok) {
-        setStats(await res.json());
+        setStats(normalizeDevLogStats(await res.json()));
       }
     } finally {
       setLoading(false);
