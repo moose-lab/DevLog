@@ -35,7 +35,7 @@ devlog today
 | `devlog show <id>` | View a full conversation |
 | `devlog search <query>` | Search sessions |
 | `devlog stats` | Aggregated usage statistics |
-| `devlog cost` | Cost breakdown by project and model |
+| `devlog cost` | Cost, credits, and quota breakdown by project/provider |
 | `devlog statusline` | Status line for Claude Code integration |
 | `devlog setup-statusline` | Configure Claude Code status bar |
 | `devlog setup-tmux` | Configure tmux cost dashboard |
