@@ -6,11 +6,12 @@ import type {
   CostReport,
 } from "./cost-tracker";
 
-export type CostPeriodKey = "today" | "week" | "allTime";
+export type CostPeriodKey = "today" | "week" | "month" | "allTime";
 
 export const COST_PERIOD_LABELS: Record<CostPeriodKey, string> = {
   today: "Today",
   week: "7D",
+  month: "1M",
   allTime: "All Time",
 };
 

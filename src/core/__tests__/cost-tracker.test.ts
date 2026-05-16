@@ -96,6 +96,35 @@ test("aggregateCostReport groups Codex usage by project and period", async () =>
   );
 });
 
+test("aggregateCostReport uses a calendar-month window for monthly totals", async () => {
+  await withCodexJsonl(
+    [
+      {
+        timestamp: "2026-04-15T23:59:00.000+08:00",
+        type: "turn_context",
+        payload: { cwd: "/Users/moose/Moose/DevLog", model: "gpt-5.1-codex" },
+      },
+      tokenCount("2026-04-15T23:59:00.000+08:00", 500, 0, 0, 0, 500, 2, 8),
+      tokenCount("2026-04-16T00:00:00.000+08:00", 1000, 0, 0, 0, 1000, 3, 9),
+      tokenCount("2026-05-16T01:00:00.000+08:00", 1500, 0, 0, 0, 1500, 4, 10),
+    ],
+    async (filePath) => {
+      const parsed = await scanCodexSession(filePath);
+      const report = aggregateCostReport(parsed.records, parsed.quota, {
+        now: new Date("2026-05-16T12:00:00.000+08:00"),
+        claudeProjectsDir: "/tmp/claude",
+        codexSessionsDir: "/tmp/codex",
+      });
+
+      assert.equal(report.totals.month.usageEvents, 2);
+      assert.equal(report.totals.month.inputTokens, 1000);
+      assert.equal(report.totals.week.usageEvents, 1);
+      assert.equal(report.totals.today.usageEvents, 1);
+      assert.equal(report.projects.find((p) => p.projectName === "DevLog")?.month.inputTokens, 1000);
+    }
+  );
+});
+
 function tokenCount(
   timestamp: string,
   input: number,

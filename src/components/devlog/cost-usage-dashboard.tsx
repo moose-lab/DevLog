@@ -40,7 +40,7 @@ import {
 import type { CostPeriodTotals, CostQuotaWindow, CostReport } from "@/core/cost-tracker";
 import { useCostReport } from "@/hooks/use-cost-report";
 
-const PERIODS: CostPeriodKey[] = ["today", "week", "allTime"];
+const PERIODS: CostPeriodKey[] = ["today", "week", "month", "allTime"];
 
 export function CostUsageDashboard() {
   const [period, setPeriod] = useState<CostPeriodKey>("today");

@@ -9,7 +9,7 @@ interface CostOptions {
   period?: string;
 }
 
-type PeriodKey = "today" | "week" | "allTime";
+type PeriodKey = "today" | "week" | "month" | "allTime";
 
 function normalizePeriod(period: string | undefined): PeriodKey {
   switch (period) {
@@ -17,6 +17,9 @@ function normalizePeriod(period: string | undefined): PeriodKey {
       return "today";
     case "week":
       return "week";
+    case "month":
+    case "1m":
+      return "month";
     default:
       return "allTime";
   }
@@ -25,6 +28,7 @@ function normalizePeriod(period: string | undefined): PeriodKey {
 function periodLabel(period: PeriodKey): string {
   if (period === "today") return "Today";
   if (period === "week") return "This Week";
+  if (period === "month") return "1 Month";
   return "All Time";
 }
 
@@ -103,7 +107,9 @@ function renderReport(report: CostReport, period: PeriodKey): void {
       chalk.cyan("devlog cost --json") +
       chalk.dim(" full report  ·  ") +
       chalk.cyan("devlog cost --period week") +
-      chalk.dim(" weekly view")
+      chalk.dim(" weekly view  ·  ") +
+      chalk.cyan("devlog cost --period month") +
+      chalk.dim(" monthly view")
   );
   console.log();
 }

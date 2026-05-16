@@ -44,6 +44,7 @@ export interface CostProjectSummary {
   providers: CostProvider[];
   today: CostPeriodTotals;
   week: CostPeriodTotals;
+  month: CostPeriodTotals;
   allTime: CostPeriodTotals;
 }
 
@@ -52,6 +53,7 @@ export interface CostProviderSummary {
   billingModes: BillingMode[];
   today: CostPeriodTotals;
   week: CostPeriodTotals;
+  month: CostPeriodTotals;
   allTime: CostPeriodTotals;
   quota: CostQuotaWindow[];
 }
@@ -61,6 +63,7 @@ export interface CostReport {
   totals: {
     today: CostPeriodTotals;
     week: CostPeriodTotals;
+    month: CostPeriodTotals;
     allTime: CostPeriodTotals;
   };
   providers: CostProviderSummary[];
@@ -199,10 +202,12 @@ export function aggregateCostReport(
 ): CostReport {
   const todayStart = dayjs(options.now).startOf("day");
   const weekStart = dayjs(options.now).subtract(7, "day").startOf("day");
+  const monthStart = dayjs(options.now).subtract(1, "month").startOf("day");
 
   const totals = {
     today: emptyCostTotals(),
     week: emptyCostTotals(),
+    month: emptyCostTotals(),
     allTime: emptyCostTotals(),
   };
   const providers = new Map<CostProvider, CostProviderSummary>();
@@ -211,22 +216,26 @@ export function aggregateCostReport(
   for (const record of records) {
     const isToday = dayjs(record.timestamp).isAfter(todayStart) || dayjs(record.timestamp).isSame(todayStart);
     const isWeek = dayjs(record.timestamp).isAfter(weekStart) || dayjs(record.timestamp).isSame(weekStart);
+    const isMonth = dayjs(record.timestamp).isAfter(monthStart) || dayjs(record.timestamp).isSame(monthStart);
 
     addCostTotals(totals.allTime, record);
     if (isToday) addCostTotals(totals.today, record);
     if (isWeek) addCostTotals(totals.week, record);
+    if (isMonth) addCostTotals(totals.month, record);
 
     const provider = getProviderSummary(providers, record.provider);
     if (!provider.billingModes.includes(record.billingMode)) provider.billingModes.push(record.billingMode);
     addCostTotals(provider.allTime, record);
     if (isToday) addCostTotals(provider.today, record);
     if (isWeek) addCostTotals(provider.week, record);
+    if (isMonth) addCostTotals(provider.month, record);
 
     const project = getProjectSummary(projects, record.projectName, record.projectPath);
     if (!project.providers.includes(record.provider)) project.providers.push(record.provider);
     addCostTotals(project.allTime, record);
     if (isToday) addCostTotals(project.today, record);
     if (isWeek) addCostTotals(project.week, record);
+    if (isMonth) addCostTotals(project.month, record);
   }
 
   for (const provider of providers.values()) {
@@ -376,6 +385,7 @@ function getProviderSummary(map: Map<CostProvider, CostProviderSummary>, provide
     billingModes: [],
     today: emptyCostTotals(),
     week: emptyCostTotals(),
+    month: emptyCostTotals(),
     allTime: emptyCostTotals(),
     quota: [],
   };
@@ -393,6 +403,7 @@ function getProjectSummary(map: Map<string, CostProjectSummary>, name: string, p
     providers: [],
     today: emptyCostTotals(),
     week: emptyCostTotals(),
+    month: emptyCostTotals(),
     allTime: emptyCostTotals(),
   };
   map.set(key, created);
@@ -410,9 +421,10 @@ function latestQuotaForProvider(quota: CostQuotaWindow[], provider: CostProvider
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function roundReportTotals<T extends { today: CostPeriodTotals; week: CostPeriodTotals; allTime: CostPeriodTotals }>(value: T): T {
+function roundReportTotals<T extends { today: CostPeriodTotals; week: CostPeriodTotals; month: CostPeriodTotals; allTime: CostPeriodTotals }>(value: T): T {
   value.today = roundTotals(value.today);
   value.week = roundTotals(value.week);
+  value.month = roundTotals(value.month);
   value.allTime = roundTotals(value.allTime);
   return value;
 }

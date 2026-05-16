@@ -216,7 +216,7 @@ program
 program
   .command("cost")
   .description("Cost, credits, and quota breakdown")
-  .option("--period <period>", "Filter: today, week, all", "all")
+  .option("--period <period>", "Filter: today, week, month, all", "all")
   .action(async (options) => {
     const globalOpts = getGlobalOpts();
     try {
