@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  COST_PERIOD_LABELS,
   formatCredits,
   formatTokenCount,
   formatUsd,
@@ -23,6 +24,7 @@ test("formatters keep cost and usage values compact", () => {
 test("labels expose provider and quota window names", () => {
   assert.equal(providerLabel("claude_code"), "Claude Code");
   assert.equal(providerLabel("codex"), "Codex");
+  assert.equal(COST_PERIOD_LABELS.month, "1M");
   assert.equal(quotaWindowLabel(300), "5h window");
   assert.equal(quotaWindowLabel(10080), "Weekly window");
 });
@@ -40,11 +42,23 @@ test("getTopCostProjects sorts by selected period totals", () => {
   );
 });
 
+test("getTopCostProjects supports monthly period totals", () => {
+  const report = fakeReport([
+    project("outside-month", "allTime", { apiCostUSD: 20, totalTokens: 2_000 }),
+    project("inside-month", "month", { subscriptionCredits: 40, totalTokens: 1_000 }),
+  ]);
+
+  assert.deepEqual(
+    getTopCostProjects(report, "month", 5).map((item) => item.projectName),
+    ["inside-month"]
+  );
+});
+
 function fakeReport(projects: CostReport["projects"]): CostReport {
   const empty = totals();
   return {
     generatedAt: "2026-05-16T00:00:00.000Z",
-    totals: { today: empty, week: empty, allTime: empty },
+    totals: { today: empty, week: empty, month: empty, allTime: empty },
     providers: [],
     projects,
     quota: [],
@@ -59,6 +73,7 @@ function project(name: string, period: CostPeriodKey, overrides: Partial<CostPer
     providers: ["codex"],
     today: period === "today" ? totals(overrides) : totals(),
     week: period === "week" ? totals(overrides) : totals(),
+    month: period === "month" ? totals(overrides) : totals(),
     allTime: period === "allTime" ? totals(overrides) : totals(),
   };
 }
