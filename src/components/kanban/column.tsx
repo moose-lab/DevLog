@@ -8,9 +8,11 @@ import { cn } from "@/core/dashboard-utils";
 
 const COLUMN_CONFIG: Record<TaskStatus, { label: string; color: string }> = {
   todo: { label: "Todo", color: "bg-slate-500" },
+  in_queue: { label: "Queued", color: "bg-amber-500" },
   in_progress: { label: "In Progress", color: "bg-blue-500" },
   review: { label: "Review", color: "bg-purple-500" },
   blocked: { label: "Blocked", color: "bg-red-500" },
+  fail: { label: "Failed", color: "bg-rose-500" },
   done: { label: "Done", color: "bg-green-500" },
 };
 

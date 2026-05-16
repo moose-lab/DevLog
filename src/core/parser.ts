@@ -75,6 +75,7 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
   const toolSet = new Set<string>();
   const fileSet = new Set<string>();
   const modelSet = new Set<string>();
+  const costedMessageIds = new Set<string>();
 
   const rl = createInterface({
     input: createReadStream(filePath, { encoding: "utf-8" }),
@@ -113,10 +114,16 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
         meta.firstUserMessage = extractTextContent(event);
       }
 
-      // Cost: compute from usage tokens (costUSD is null in real data)
+      // Cost: assistant messages from one model step can appear in multiple
+      // JSONL rows with the same message.id. Count that usage once.
       const model = getModel(event);
-      const usage = event.message && typeof event.message === "object" ? event.message.usage : undefined;
-      if (model && usage) {
+      const message = event.message && typeof event.message === "object" ? event.message : undefined;
+      const usage = message?.usage;
+      const messageId = typeof message?.id === "string" ? message.id : undefined;
+      const shouldCountUsage = Boolean(usage) && (!messageId || !costedMessageIds.has(messageId));
+
+      if (model && usage && shouldCountUsage) {
+        if (messageId) costedMessageIds.add(messageId);
         const cost = computeCost(model, usage);
         meta.totalCostUSD += cost;
         meta.costByModel[model] = (meta.costByModel[model] || 0) + cost;

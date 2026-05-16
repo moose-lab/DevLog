@@ -116,20 +116,27 @@ import { createInterface } from "readline";
 
 // src/core/pricing.ts
 var PRICING = {
-  "claude-opus-4-6": { input: 15, output: 75, cacheCreation: 18.75, cacheRead: 1.5 },
-  "claude-opus-4-5-20251101": { input: 15, output: 75, cacheCreation: 18.75, cacheRead: 1.5 },
+  "claude-opus-4-7": { input: 5, output: 25, cacheCreation: 6.25, cacheRead: 0.5 },
+  "claude-opus-4-6": { input: 5, output: 25, cacheCreation: 6.25, cacheRead: 0.5 },
+  "claude-opus-4-5": { input: 5, output: 25, cacheCreation: 6.25, cacheRead: 0.5 },
+  "claude-opus-4-1": { input: 15, output: 75, cacheCreation: 18.75, cacheRead: 1.5 },
+  "claude-opus-4": { input: 15, output: 75, cacheCreation: 18.75, cacheRead: 1.5 },
   "claude-sonnet-4-6": { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.3 },
   "claude-sonnet-4-5-20241022": { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.3 },
-  "claude-haiku-4-5-20251001": { input: 0.8, output: 4, cacheCreation: 1, cacheRead: 0.08 }
+  "claude-sonnet-4-5": { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.3 },
+  "claude-sonnet-4": { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.3 },
+  "claude-haiku-4-5": { input: 1, output: 5, cacheCreation: 1.25, cacheRead: 0.1 },
+  "claude-haiku-3-5": { input: 0.8, output: 4, cacheCreation: 1, cacheRead: 0.08 },
+  "claude-3-5-haiku": { input: 0.8, output: 4, cacheCreation: 1, cacheRead: 0.08 }
 };
 var FALLBACK = { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.3 };
 function findPricing(model) {
   if (PRICING[model]) return PRICING[model];
-  for (const [key, val] of Object.entries(PRICING)) {
+  for (const [key, val] of Object.entries(PRICING).sort((a, b) => b[0].length - a[0].length)) {
     if (model.includes(key) || key.includes(model)) return val;
   }
   if (model.includes("opus")) return PRICING["claude-opus-4-6"];
-  if (model.includes("haiku")) return PRICING["claude-haiku-4-5-20251001"];
+  if (model.includes("haiku")) return PRICING["claude-haiku-4-5"];
   if (model.includes("sonnet")) return PRICING["claude-sonnet-4-6"];
   return FALLBACK;
 }
@@ -188,6 +195,7 @@ async function scanSession(filePath) {
   const toolSet = /* @__PURE__ */ new Set();
   const fileSet = /* @__PURE__ */ new Set();
   const modelSet = /* @__PURE__ */ new Set();
+  const costedMessageIds = /* @__PURE__ */ new Set();
   const rl = createInterface({
     input: createReadStream(filePath, { encoding: "utf-8" }),
     crlfDelay: Infinity
@@ -215,8 +223,12 @@ async function scanSession(filePath) {
         meta.firstUserMessage = extractTextContent(event);
       }
       const model = getModel(event);
-      const usage = event.message && typeof event.message === "object" ? event.message.usage : void 0;
-      if (model && usage) {
+      const message = event.message && typeof event.message === "object" ? event.message : void 0;
+      const usage = message?.usage;
+      const messageId = typeof message?.id === "string" ? message.id : void 0;
+      const shouldCountUsage = Boolean(usage) && (!messageId || !costedMessageIds.has(messageId));
+      if (model && usage && shouldCountUsage) {
+        if (messageId) costedMessageIds.add(messageId);
         const cost = computeCost(model, usage);
         meta.totalCostUSD += cost;
         meta.costByModel[model] = (meta.costByModel[model] || 0) + cost;
@@ -1900,10 +1912,10 @@ async function statsCommand(options, globalOpts) {
       costByModel[model] = (costByModel[model] || 0) + cost;
     }
   }
-  const periodLabel = period === "today" ? "Today" : period === "week" ? "This Week" : period === "month" ? "This Month" : "All Time";
+  const periodLabel2 = period === "today" ? "Today" : period === "week" ? "This Week" : period === "month" ? "This Month" : "All Time";
   if (isJsonMode()) {
     outputJson({
-      period: periodLabel,
+      period: periodLabel2,
       sessionCount: filtered.length,
       totalMessages,
       totalToolCalls: totalTools,
@@ -1918,7 +1930,7 @@ async function statsCommand(options, globalOpts) {
   if (filtered.length === 0) {
     console.log();
     console.log(
-      chalk8.bold.cyan("  \u258C") + chalk8.bold.white(` Stats \u2014 ${periodLabel}`)
+      chalk8.bold.cyan("  \u258C") + chalk8.bold.white(` Stats \u2014 ${periodLabel2}`)
     );
     console.log();
     console.log(chalk8.dim("  No sessions in this period."));
@@ -1927,7 +1939,7 @@ async function statsCommand(options, globalOpts) {
   }
   console.log();
   console.log(
-    chalk8.bold.cyan("  \u258C") + chalk8.bold.white(` Stats \u2014 ${periodLabel}`)
+    chalk8.bold.cyan("  \u258C") + chalk8.bold.white(` Stats \u2014 ${periodLabel2}`)
   );
   console.log();
   const w = 42;
@@ -1984,32 +1996,373 @@ async function statsCommand(options, globalOpts) {
 // src/cli/commands/cost.ts
 import chalk9 from "chalk";
 import ora8 from "ora";
+
+// src/core/cost-tracker.ts
+import { readdir as readdir2 } from "fs/promises";
+import { createReadStream as createReadStream2 } from "fs";
+import { createInterface as createInterface2 } from "readline";
+import { basename, join as join5 } from "path";
+import { homedir as homedir2 } from "os";
 import dayjs6 from "dayjs";
-import isToday4 from "dayjs/plugin/isToday.js";
-dayjs6.extend(isToday4);
-function filterByPeriod2(sessions, period) {
-  const now = dayjs6();
-  return sessions.filter((s) => {
-    const d = dayjs6(s.updatedAt);
-    switch (period) {
-      case "today":
-        return d.isToday();
-      case "week":
-        return now.diff(d, "day") < 7;
-      case "month":
-        return now.diff(d, "day") < 30;
-      default:
-        return true;
+var EMPTY_TOTALS = {
+  usageEvents: 0,
+  inputTokens: 0,
+  cachedInputTokens: 0,
+  outputTokens: 0,
+  reasoningOutputTokens: 0,
+  totalTokens: 0,
+  apiCostUSD: 0,
+  subscriptionCredits: 0
+};
+var CODEX_API_PRICING_USD = {
+  "gpt-5.1-codex": { input: 1.25, cachedInput: 0.125, output: 10 },
+  "gpt-5.1-codex-max": { input: 1.25, cachedInput: 0.125, output: 10 },
+  "gpt-5-codex": { input: 1.25, cachedInput: 0.125, output: 10 }
+};
+var CODEX_CREDIT_RATES = {
+  "gpt-5.5": { input: 125, cachedInput: 12.5, output: 750 },
+  "gpt-5.4-mini": { input: 18.75, cachedInput: 1.875, output: 113 },
+  "gpt-5.4": { input: 62.5, cachedInput: 6.25, output: 375 },
+  "gpt-5.3-codex": { input: 43.75, cachedInput: 4.375, output: 350 },
+  "gpt-5.2": { input: 43.75, cachedInput: 4.375, output: 350 },
+  "gpt-5.1-codex": { input: 43.75, cachedInput: 4.375, output: 350 },
+  "gpt-5-codex": { input: 43.75, cachedInput: 4.375, output: 350 }
+};
+function getCodexSessionsDir() {
+  return join5(homedir2(), ".codex", "sessions");
+}
+function getCodexArchivedSessionsDir() {
+  return join5(homedir2(), ".codex", "archived_sessions");
+}
+function emptyCostTotals() {
+  return { ...EMPTY_TOTALS };
+}
+function addCostTotals(target, source) {
+  const tokens = "tokens" in source ? source.tokens : source;
+  target.usageEvents += "usageEvents" in source ? source.usageEvents : 1;
+  target.inputTokens += tokens.inputTokens;
+  target.cachedInputTokens += tokens.cachedInputTokens;
+  target.outputTokens += tokens.outputTokens;
+  target.reasoningOutputTokens += tokens.reasoningOutputTokens;
+  target.totalTokens += tokens.totalTokens;
+  target.apiCostUSD += source.apiCostUSD;
+  target.subscriptionCredits += source.subscriptionCredits;
+}
+function computeCodexApiCostUSD(model, tokens) {
+  const rate = findRate(model, CODEX_API_PRICING_USD);
+  return pricedTotal(tokens, rate);
+}
+function computeCodexSubscriptionCredits(model, tokens) {
+  const rate = findRate(model, CODEX_CREDIT_RATES);
+  return pricedTotal(tokens, rate);
+}
+async function buildCostReport(options = {}) {
+  const now = options.now ?? /* @__PURE__ */ new Date();
+  const claudeProjectsDir = options.claudeProjectsDir;
+  const codexSessionsDir = options.codexSessionsDir ?? getCodexSessionsDir();
+  const records = [];
+  const claudeProjects = await discoverProjects(claudeProjectsDir);
+  for (const project of claudeProjects) {
+    for (const session of project.sessions) {
+      records.push(claudeSessionToRecord(session));
     }
+  }
+  const codexFiles = await listCodexSessionFiles(codexSessionsDir, codexSessionsDir === getCodexSessionsDir());
+  const quota = [];
+  for (const filePath of codexFiles) {
+    const parsed = await scanCodexSession(filePath);
+    records.push(...parsed.records);
+    quota.push(...parsed.quota);
+  }
+  return aggregateCostReport(records, quota, {
+    now,
+    claudeProjectsDir: claudeProjectsDir ?? join5(homedir2(), ".claude", "projects"),
+    codexSessionsDir
   });
 }
+function aggregateCostReport(records, quota, options) {
+  const todayStart = dayjs6(options.now).startOf("day");
+  const weekStart = dayjs6(options.now).subtract(7, "day").startOf("day");
+  const totals = {
+    today: emptyCostTotals(),
+    week: emptyCostTotals(),
+    allTime: emptyCostTotals()
+  };
+  const providers = /* @__PURE__ */ new Map();
+  const projects = /* @__PURE__ */ new Map();
+  for (const record of records) {
+    const isToday4 = dayjs6(record.timestamp).isAfter(todayStart) || dayjs6(record.timestamp).isSame(todayStart);
+    const isWeek = dayjs6(record.timestamp).isAfter(weekStart) || dayjs6(record.timestamp).isSame(weekStart);
+    addCostTotals(totals.allTime, record);
+    if (isToday4) addCostTotals(totals.today, record);
+    if (isWeek) addCostTotals(totals.week, record);
+    const provider = getProviderSummary(providers, record.provider);
+    if (!provider.billingModes.includes(record.billingMode)) provider.billingModes.push(record.billingMode);
+    addCostTotals(provider.allTime, record);
+    if (isToday4) addCostTotals(provider.today, record);
+    if (isWeek) addCostTotals(provider.week, record);
+    const project = getProjectSummary(projects, record.projectName, record.projectPath);
+    if (!project.providers.includes(record.provider)) project.providers.push(record.provider);
+    addCostTotals(project.allTime, record);
+    if (isToday4) addCostTotals(project.today, record);
+    if (isWeek) addCostTotals(project.week, record);
+  }
+  for (const provider of providers.values()) {
+    provider.quota = latestQuotaForProvider(quota, provider.provider);
+  }
+  return {
+    generatedAt: options.now.toISOString(),
+    totals: roundReportTotals(totals),
+    providers: [...providers.values()].sort((a, b) => b.allTime.apiCostUSD - a.allTime.apiCostUSD),
+    projects: [...projects.values()].sort((a, b) => b.allTime.apiCostUSD - a.allTime.apiCostUSD),
+    quota: latestQuotaForProvider(quota, "codex"),
+    sources: {
+      claudeProjectsDir: options.claudeProjectsDir,
+      codexSessionsDir: options.codexSessionsDir
+    }
+  };
+}
+async function scanCodexSession(filePath) {
+  const records = [];
+  const quota = [];
+  const sessionId = basename(filePath, ".jsonl");
+  let currentProjectPath = "unknown";
+  let currentProjectName = "unknown";
+  let currentModel = "gpt-5-codex";
+  let previous = emptyTokens();
+  const rl = createInterface2({
+    input: createReadStream2(filePath, { encoding: "utf-8" }),
+    crlfDelay: Infinity
+  });
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const timestamp = event.timestamp ? new Date(event.timestamp) : /* @__PURE__ */ new Date(0);
+    if (event.type === "turn_context" && event.payload) {
+      if (typeof event.payload.cwd === "string") {
+        currentProjectPath = event.payload.cwd;
+        currentProjectName = basename(currentProjectPath);
+      }
+      if (typeof event.payload.model === "string") {
+        currentModel = event.payload.model;
+      }
+      continue;
+    }
+    if (event.type !== "event_msg" || event.payload?.type !== "token_count") continue;
+    quota.push(...extractCodexQuota(event.payload.rate_limits, timestamp));
+    const usage = event.payload.info?.total_token_usage;
+    if (!usage) continue;
+    const current = normalizeCodexTokens(usage);
+    const delta = diffTokens(current, previous);
+    previous = maxTokens(previous, current);
+    if (delta.totalTokens <= 0) continue;
+    records.push({
+      provider: "codex",
+      billingMode: "oauth_subscription",
+      timestamp,
+      sessionId,
+      projectName: currentProjectName,
+      projectPath: currentProjectPath,
+      model: currentModel,
+      tokens: delta,
+      apiCostUSD: computeCodexApiCostUSD(currentModel, delta),
+      subscriptionCredits: computeCodexSubscriptionCredits(currentModel, delta)
+    });
+  }
+  return { records, quota };
+}
+async function listCodexSessionFiles(root, includeArchived) {
+  const out = [];
+  async function walk(dir) {
+    let entries;
+    try {
+      entries = await readdir2(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const path2 = join5(dir, entry.name);
+      if (entry.isDirectory()) await walk(path2);
+      else if (entry.isFile() && entry.name.endsWith(".jsonl")) out.push(path2);
+    }
+  }
+  await walk(root);
+  if (includeArchived) await walk(getCodexArchivedSessionsDir());
+  return out;
+}
+function claudeSessionToRecord(session) {
+  return {
+    provider: "claude_code",
+    billingMode: "api",
+    timestamp: session.updatedAt,
+    sessionId: session.id,
+    projectName: session.projectName,
+    projectPath: session.projectPath,
+    model: session.meta.models[0] ?? "unknown",
+    tokens: emptyTokens(),
+    apiCostUSD: session.meta.totalCostUSD,
+    subscriptionCredits: 0
+  };
+}
+function extractCodexQuota(rateLimits, timestamp) {
+  const windows = [];
+  for (const name of ["primary", "secondary"]) {
+    const value = rateLimits?.[name];
+    if (!value || typeof value.used_percent !== "number" || typeof value.window_minutes !== "number") continue;
+    windows.push({
+      provider: "codex",
+      name,
+      observedAt: timestamp.toISOString(),
+      usedPercent: clampPercent(value.used_percent),
+      remainingPercent: clampPercent(100 - value.used_percent),
+      windowMinutes: value.window_minutes,
+      resetsAt: typeof value.resets_at === "number" ? new Date(value.resets_at * 1e3).toISOString() : null,
+      source: "local_log"
+    });
+  }
+  return windows.sort((a, b) => timestamp.getTime() - timestamp.getTime() || a.name.localeCompare(b.name));
+}
+function getProviderSummary(map, provider) {
+  const existing = map.get(provider);
+  if (existing) return existing;
+  const created = {
+    provider,
+    billingModes: [],
+    today: emptyCostTotals(),
+    week: emptyCostTotals(),
+    allTime: emptyCostTotals(),
+    quota: []
+  };
+  map.set(provider, created);
+  return created;
+}
+function getProjectSummary(map, name, path2) {
+  const key = `${name}\0${path2}`;
+  const existing = map.get(key);
+  if (existing) return existing;
+  const created = {
+    projectName: name,
+    projectPath: path2,
+    providers: [],
+    today: emptyCostTotals(),
+    week: emptyCostTotals(),
+    allTime: emptyCostTotals()
+  };
+  map.set(key, created);
+  return created;
+}
+function latestQuotaForProvider(quota, provider) {
+  const byName = /* @__PURE__ */ new Map();
+  for (const item of quota.filter((q) => q.provider === provider)) {
+    const existing = byName.get(item.name);
+    if (!existing || new Date(item.observedAt).getTime() >= new Date(existing.observedAt).getTime()) {
+      byName.set(item.name, item);
+    }
+  }
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+function roundReportTotals(value) {
+  value.today = roundTotals(value.today);
+  value.week = roundTotals(value.week);
+  value.allTime = roundTotals(value.allTime);
+  return value;
+}
+function roundTotals(totals) {
+  return {
+    ...totals,
+    apiCostUSD: roundMoney(totals.apiCostUSD),
+    subscriptionCredits: roundMoney(totals.subscriptionCredits)
+  };
+}
+function normalizeCodexTokens(usage) {
+  return {
+    inputTokens: usage.input_tokens ?? 0,
+    cachedInputTokens: usage.cached_input_tokens ?? 0,
+    outputTokens: usage.output_tokens ?? 0,
+    reasoningOutputTokens: usage.reasoning_output_tokens ?? 0,
+    totalTokens: usage.total_tokens ?? 0
+  };
+}
+function emptyTokens() {
+  return {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+    totalTokens: 0
+  };
+}
+function diffTokens(current, previous) {
+  return {
+    inputTokens: Math.max(0, current.inputTokens - previous.inputTokens),
+    cachedInputTokens: Math.max(0, current.cachedInputTokens - previous.cachedInputTokens),
+    outputTokens: Math.max(0, current.outputTokens - previous.outputTokens),
+    reasoningOutputTokens: Math.max(0, current.reasoningOutputTokens - previous.reasoningOutputTokens),
+    totalTokens: Math.max(0, current.totalTokens - previous.totalTokens)
+  };
+}
+function maxTokens(a, b) {
+  return {
+    inputTokens: Math.max(a.inputTokens, b.inputTokens),
+    cachedInputTokens: Math.max(a.cachedInputTokens, b.cachedInputTokens),
+    outputTokens: Math.max(a.outputTokens, b.outputTokens),
+    reasoningOutputTokens: Math.max(a.reasoningOutputTokens, b.reasoningOutputTokens),
+    totalTokens: Math.max(a.totalTokens, b.totalTokens)
+  };
+}
+function findRate(model, table) {
+  const normalized = model.toLowerCase();
+  for (const [key, rate] of Object.entries(table).sort((a, b) => b[0].length - a[0].length)) {
+    if (normalized.includes(key)) return rate;
+  }
+  return table["gpt-5-codex"] ?? table["gpt-5.1-codex"];
+}
+function pricedTotal(tokens, rate) {
+  const perM = 1e6;
+  return tokens.inputTokens * rate.input / perM + tokens.cachedInputTokens * rate.cachedInput / perM + tokens.outputTokens * rate.output / perM;
+}
+function clampPercent(value) {
+  return Math.min(100, Math.max(0, value));
+}
+function roundMoney(value) {
+  return Math.round(value * 1e6) / 1e6;
+}
+
+// src/cli/commands/cost.ts
+function normalizePeriod(period) {
+  switch (period) {
+    case "today":
+      return "today";
+    case "week":
+      return "week";
+    default:
+      return "allTime";
+  }
+}
+function periodLabel(period) {
+  if (period === "today") return "Today";
+  if (period === "week") return "This Week";
+  return "All Time";
+}
 function renderBar(fraction, width = 16) {
-  const filled = Math.round(fraction * width);
+  const filled = Math.round(Math.max(0, Math.min(1, fraction)) * width);
   return chalk9.green("\u2588".repeat(filled)) + chalk9.dim("\u2591".repeat(width - filled));
 }
-async function costCommand(options, globalOpts) {
-  const { config } = ensureInit();
-  const period = options.period || "all";
+function formatUsd(value) {
+  if (value <= 0) return "$0.000";
+  return value < 1 ? `$${value.toFixed(3)}` : `$${value.toFixed(2)}`;
+}
+function formatCredits(value) {
+  if (value <= 0) return "0 credits";
+  return `${value < 10 ? value.toFixed(2) : value.toFixed(1)} credits`;
+}
+async function costCommand(options, _globalOpts) {
+  const period = normalizePeriod(options.period);
   let spinner = null;
   if (!isJsonMode() && !isQuietMode()) {
     spinner = ora8({
@@ -2019,95 +2372,89 @@ async function costCommand(options, globalOpts) {
       stream: process.stderr
     }).start();
   }
-  const projects = await discoverProjects(config.claudeDir);
+  const report = await buildCostReport();
   spinner?.stop();
-  const allSessions = [];
-  for (const p of projects) allSessions.push(...p.sessions);
-  const filtered = filterByPeriod2(allSessions, period);
-  const byProject = /* @__PURE__ */ new Map();
-  const byModel = /* @__PURE__ */ new Map();
-  let totalCost = 0;
-  for (const s of filtered) {
-    totalCost += s.meta.totalCostUSD;
-    byProject.set(
-      s.projectName,
-      (byProject.get(s.projectName) || 0) + s.meta.totalCostUSD
-    );
-    for (const [model, cost] of Object.entries(s.meta.costByModel)) {
-      byModel.set(model, (byModel.get(model) || 0) + cost);
-    }
-  }
-  const periodLabel = period === "today" ? "Today" : period === "week" ? "This Week" : period === "month" ? "This Month" : "All Time";
   if (isJsonMode()) {
-    outputJson({
-      period: periodLabel,
-      totalCostUSD: Math.round(totalCost * 1e6) / 1e6,
-      byProject: [...byProject.entries()].sort((a, b) => b[1] - a[1]).map(([name, cost]) => ({ name, costUSD: Math.round(cost * 1e6) / 1e6 })),
-      byModel: [...byModel.entries()].sort((a, b) => b[1] - a[1]).map(([name, cost]) => ({ name, costUSD: Math.round(cost * 1e6) / 1e6 }))
-    });
+    outputJson(report);
     return;
   }
+  renderReport(report, period);
+}
+function renderReport(report, period) {
+  const total = report.totals[period];
   console.log();
   console.log(
-    chalk9.bold.cyan("  \u258C") + chalk9.bold.white(` Cost Breakdown \u2014 ${periodLabel}`)
+    chalk9.bold.cyan("  \u258C") + chalk9.bold.white(` Cost Breakdown \u2014 ${periodLabel(period)}`)
   );
   console.log();
-  if (totalCost === 0) {
+  if (total.apiCostUSD === 0 && total.subscriptionCredits === 0) {
     console.log(chalk9.dim("  No costs recorded in this period."));
     console.log();
     return;
   }
-  console.log(
-    chalk9.dim("  Total: ") + costWithContext(totalCost)
-  );
+  console.log(chalk9.dim("  API estimate: ") + costWithContext(total.apiCostUSD));
+  if (total.subscriptionCredits > 0) {
+    console.log(chalk9.dim("  Subscription usage: ") + chalk9.yellow(formatCredits(total.subscriptionCredits)));
+  }
+  console.log(chalk9.dim("  Tokens: ") + chalk9.white(total.totalTokens.toLocaleString()));
   console.log();
-  const projectEntries = [...byProject.entries()].sort((a, b) => b[1] - a[1]);
-  if (projectEntries.length > 0) {
-    console.log(chalk9.white("  By project:"));
-    for (const [name, cost] of projectEntries) {
-      const pct = totalCost > 0 ? Math.round(cost / totalCost * 100) : 0;
-      const costStr = cost < 1 ? `$${cost.toFixed(3)}` : `$${cost.toFixed(2)}`;
-      console.log(
-        chalk9.dim("    ") + chalk9.cyan(name.padEnd(18)) + chalk9.yellow(costStr.padEnd(10)) + chalk9.dim(`(${pct}%)`.padEnd(7)) + renderBar(cost / totalCost)
-      );
-    }
-    console.log();
-  }
-  const modelEntries = [...byModel.entries()].sort((a, b) => b[1] - a[1]);
-  if (modelEntries.length > 0) {
-    console.log(chalk9.white("  By model:"));
-    for (const [name, cost] of modelEntries) {
-      const pct = totalCost > 0 ? Math.round(cost / totalCost * 100) : 0;
-      const costStr = cost < 1 ? `$${cost.toFixed(3)}` : `$${cost.toFixed(2)}`;
-      let label = name;
-      if (name.includes("opus")) label = "claude-opus";
-      else if (name.includes("sonnet")) label = "claude-sonnet";
-      else if (name.includes("haiku")) label = "claude-haiku";
-      let context = "";
-      if (pct > 70) context = "  most of your work";
-      else if (pct < 20) context = "  for the hard stuff";
-      console.log(
-        chalk9.dim("    ") + chalk9.white(label.padEnd(18)) + chalk9.yellow(costStr.padEnd(10)) + chalk9.dim(`(${pct}%)`) + chalk9.dim(context)
-      );
-    }
-    console.log();
-  }
+  renderQuota(report);
+  renderProviders(report, period, total);
+  renderProjects(report, period, total);
   console.log(chalk9.dim("  " + "\u2500".repeat(60)));
   console.log();
   console.log(
-    chalk9.dim("  ") + chalk9.cyan("devlog stats") + chalk9.dim(" usage trends  \xB7  ") + chalk9.cyan("devlog cost --period week") + chalk9.dim(" filter")
+    chalk9.dim("  ") + chalk9.cyan("devlog cost --json") + chalk9.dim(" full report  \xB7  ") + chalk9.cyan("devlog cost --period week") + chalk9.dim(" weekly view")
   );
+  console.log();
+}
+function renderQuota(report) {
+  if (report.quota.length === 0) return;
+  console.log(chalk9.white("  Quota:"));
+  for (const q of report.quota) {
+    const label = q.name === "primary" ? "daily/window" : "weekly";
+    const reset = q.resetsAt ? ` resets ${new Date(q.resetsAt).toLocaleString()}` : "";
+    console.log(
+      chalk9.dim("    ") + chalk9.cyan(label.padEnd(14)) + chalk9.yellow(`${q.usedPercent.toFixed(1)}% used`.padEnd(14)) + chalk9.dim(`${q.remainingPercent.toFixed(1)}% left`) + chalk9.dim(reset)
+    );
+  }
+  console.log();
+}
+function renderProviders(report, period, total) {
+  console.log(chalk9.white("  By provider:"));
+  for (const provider of report.providers) {
+    const p = provider[period];
+    if (p.apiCostUSD === 0 && p.subscriptionCredits === 0) continue;
+    const pct = total.apiCostUSD > 0 ? p.apiCostUSD / total.apiCostUSD : 0;
+    const label = provider.provider === "claude_code" ? "Claude Code" : "Codex";
+    console.log(
+      chalk9.dim("    ") + chalk9.cyan(label.padEnd(18)) + chalk9.yellow(formatUsd(p.apiCostUSD).padEnd(10)) + chalk9.dim(formatCredits(p.subscriptionCredits).padEnd(15)) + renderBar(pct)
+    );
+  }
+  console.log();
+}
+function renderProjects(report, period, total) {
+  console.log(chalk9.white("  By project:"));
+  for (const project of report.projects.slice(0, 12)) {
+    const p = project[period];
+    if (p.apiCostUSD === 0 && p.subscriptionCredits === 0) continue;
+    const pct = total.apiCostUSD > 0 ? p.apiCostUSD / total.apiCostUSD : 0;
+    const name = project.projectName.length > 24 ? `${project.projectName.slice(0, 23)}\u2026` : project.projectName;
+    console.log(
+      chalk9.dim("    ") + chalk9.cyan(name.padEnd(25)) + chalk9.yellow(formatUsd(p.apiCostUSD).padEnd(10)) + chalk9.dim(formatCredits(p.subscriptionCredits).padEnd(15)) + renderBar(pct)
+    );
+  }
   console.log();
 }
 
 // src/cli/commands/statusline.ts
 import { readFileSync as readFileSync3 } from "fs";
-import { join as join6 } from "path";
-import { homedir as homedir2 } from "os";
+import { join as join7 } from "path";
+import { homedir as homedir3 } from "os";
 
 // src/core/fast-discovery.ts
-import { readdir as readdir2, stat as stat2 } from "fs/promises";
-import { join as join5 } from "path";
+import { readdir as readdir3, stat as stat3 } from "fs/promises";
+import { join as join6 } from "path";
 import dayjs7 from "dayjs";
 async function discoverTodayStats(claudeDir) {
   const todayMidnight = dayjs7().startOf("day").valueOf();
@@ -2123,26 +2470,26 @@ async function discoverTodayStats(claudeDir) {
   const projectSet = /* @__PURE__ */ new Set();
   let entries;
   try {
-    entries = await readdir2(claudeDir, { withFileTypes: true });
+    entries = await readdir3(claudeDir, { withFileTypes: true });
   } catch {
     return result;
   }
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    const projectDir = join5(claudeDir, entry.name);
+    const projectDir = join6(claudeDir, entry.name);
     const decodedPath = decodePath(entry.name);
     const projectName = getProjectName(decodedPath);
     let files;
     try {
-      files = await readdir2(projectDir, { withFileTypes: true });
+      files = await readdir3(projectDir, { withFileTypes: true });
     } catch {
       continue;
     }
     for (const file of files) {
       if (!file.isFile() || !file.name.endsWith(".jsonl")) continue;
-      const filePath = join5(projectDir, file.name);
+      const filePath = join6(projectDir, file.name);
       try {
-        const fileStat = await stat2(filePath);
+        const fileStat = await stat3(filePath);
         if (fileStat.mtimeMs < todayMidnight) continue;
         const meta = await scanSession(filePath);
         const lastActivity = meta.lastActivity.getTime();
@@ -2213,7 +2560,7 @@ async function readStdinWithTimeout(ms) {
   ]);
 }
 function readAgentState() {
-  const statusFile = join6(homedir2(), ".claude-status");
+  const statusFile = join7(homedir3(), ".claude-status");
   try {
     const raw = readFileSync3(statusFile, "utf-8");
     const match = raw.match(/"state":"([^"]+)"/);
@@ -2270,8 +2617,8 @@ function formatCost(usd) {
 
 // src/cli/commands/setup-statusline.ts
 import { existsSync as existsSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync3, mkdirSync as mkdirSync3, copyFileSync, chmodSync } from "fs";
-import { join as join7, dirname as dirname2 } from "path";
-import { homedir as homedir3 } from "os";
+import { join as join8, dirname as dirname2 } from "path";
+import { homedir as homedir4 } from "os";
 import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import chalk10 from "chalk";
@@ -2335,7 +2682,7 @@ async function setupStatuslineCommand() {
     devlogBin = execFileSync("which", ["devlog"], { encoding: "utf-8" }).trim();
   } catch {
   }
-  const claudeSettingsPath = join7(homedir3(), ".claude", "settings.json");
+  const claudeSettingsPath = join8(homedir4(), ".claude", "settings.json");
   let settings = {};
   if (existsSync5(claudeSettingsPath)) {
     try {
@@ -2360,11 +2707,11 @@ async function setupStatuslineCommand() {
   writeFileSync3(claudeSettingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
   console.log();
   console.log(chalk10.green("  \u2713") + chalk10.bold.white(" Claude Code status line + hooks configured"));
-  const binDir = join7(homedir3(), ".devlog", "bin");
-  const scriptDest = join7(binDir, "tmux-claude-status.sh");
+  const binDir = join8(homedir4(), ".devlog", "bin");
+  const scriptDest = join8(binDir, "tmux-claude-status.sh");
   mkdirSync3(binDir, { recursive: true });
   const thisFile = fileURLToPath(import.meta.url);
-  const scriptSrc = join7(dirname2(thisFile), "..", "..", "scripts", "tmux-claude-status.sh");
+  const scriptSrc = join8(dirname2(thisFile), "..", "..", "scripts", "tmux-claude-status.sh");
   if (existsSync5(scriptSrc)) {
     copyFileSync(scriptSrc, scriptDest);
   } else {
@@ -2372,7 +2719,7 @@ async function setupStatuslineCommand() {
   }
   chmodSync(scriptDest, 493);
   console.log(chalk10.green("  \u2713") + chalk10.bold.white(" tmux status script installed"));
-  const tmuxConfPath = join7(homedir3(), ".tmux.conf");
+  const tmuxConfPath = join8(homedir4(), ".tmux.conf");
   let tmuxConf = "";
   if (existsSync5(tmuxConfPath)) {
     tmuxConf = readFileSync4(tmuxConfPath, "utf-8");
@@ -2414,8 +2761,8 @@ async function setupStatuslineCommand() {
 
 // src/cli/commands/setup-tmux.ts
 import { existsSync as existsSync6, readFileSync as readFileSync5, writeFileSync as writeFileSync4, mkdirSync as mkdirSync4, copyFileSync as copyFileSync2, chmodSync as chmodSync2 } from "fs";
-import { join as join8, dirname as dirname3 } from "path";
-import { homedir as homedir4 } from "os";
+import { join as join9, dirname as dirname3 } from "path";
+import { homedir as homedir5 } from "os";
 import { execFileSync as execFileSync2 } from "child_process";
 import { fileURLToPath as fileURLToPath2 } from "url";
 import chalk11 from "chalk";
@@ -2493,7 +2840,7 @@ async function setupTmuxCommand() {
     devlogBin = execFileSync2("which", ["devlog"], { encoding: "utf-8" }).trim();
   } catch {
   }
-  const claudeSettingsPath = join8(homedir4(), ".claude", "settings.json");
+  const claudeSettingsPath = join9(homedir5(), ".claude", "settings.json");
   let settings = {};
   if (existsSync6(claudeSettingsPath)) {
     try {
@@ -2518,11 +2865,11 @@ async function setupTmuxCommand() {
   writeFileSync4(claudeSettingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
   console.log();
   console.log(chalk11.green("  \u2713") + chalk11.bold.white(" Claude Code hooks installed"));
-  const destDir = join8(homedir4(), ".devlog", "bin");
-  const destPath = join8(destDir, "tmux-claude-status.sh");
+  const destDir = join9(homedir5(), ".devlog", "bin");
+  const destPath = join9(destDir, "tmux-claude-status.sh");
   mkdirSync4(destDir, { recursive: true });
   const thisFile = fileURLToPath2(import.meta.url);
-  const srcPath = join8(dirname3(thisFile), "..", "..", "scripts", "tmux-claude-status.sh");
+  const srcPath = join9(dirname3(thisFile), "..", "..", "scripts", "tmux-claude-status.sh");
   if (existsSync6(srcPath)) {
     copyFileSync2(srcPath, destPath);
   } else {
@@ -2717,7 +3064,7 @@ program.command("stats").description("Aggregated usage statistics").option("--pe
     handleError(err, globalOpts);
   }
 });
-program.command("cost").description("Cost breakdown by project and model").option("--period <period>", "Filter: today, week, month, all", "all").action(async (options) => {
+program.command("cost").description("Cost, credits, and quota breakdown").option("--period <period>", "Filter: today, week, all", "all").action(async (options) => {
   const globalOpts = getGlobalOpts();
   try {
     await costCommand(options, globalOpts);

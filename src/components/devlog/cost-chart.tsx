@@ -65,7 +65,7 @@ export function CostAreaChart() {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-3">
         <p className="text-xs uppercase tracking-widest text-muted-foreground font-medium">
-          Cost Trend
+          Claude Code Cost Trend
         </p>
         <div className="flex gap-1">
           {([7, 30] as Range[]).map((r) => (

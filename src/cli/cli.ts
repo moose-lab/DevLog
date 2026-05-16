@@ -215,8 +215,8 @@ program
 // ── devlog cost ──────────────────────────────────────────
 program
   .command("cost")
-  .description("Cost breakdown by project and model")
-  .option("--period <period>", "Filter: today, week, month, all", "all")
+  .description("Cost, credits, and quota breakdown")
+  .option("--period <period>", "Filter: today, week, all", "all")
   .action(async (options) => {
     const globalOpts = getGlobalOpts();
     try {
