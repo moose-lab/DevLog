@@ -11,11 +11,11 @@
     "scripts"
   ],
   "scripts": {
-    "dev": "next dev --port 3333",
-    "build": "next build && tsup",
+    "dev": "next dev",
+    "build": "next build",
     "build:cli": "tsup",
     "build:web": "next build",
-    "start": "next start --port 3333",
+    "start": "next start",
     "test": "node --test --import tsx --test-reporter spec 'src/core/__tests__/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },

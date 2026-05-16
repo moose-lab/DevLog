@@ -10,3 +10,4 @@ _bmad/
 _bmad-output/
 .DS_Store
 .superpowers/
+package-lock.json
