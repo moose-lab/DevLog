@@ -47,7 +47,7 @@ devlog today
 
 ## Web Dashboard
 
-Start with `devlog serve` or `npm run dev`:
+Start with `devlog serve` or `bun run dev`:
 
 - **Dashboard** — Overview of all projects and sessions
 - **Tasks** — Kanban board for work items
@@ -107,22 +107,25 @@ DevLog/
 
 ```bash
 # Install dependencies
-npm install
+bun install
 
 # Build CLI
-npm run build:cli
+bun run build:cli
 
 # Build dashboard
-npm run build:web
+bun run build:web
 
 # Build both
-npm run build
+bun run build
 
 # Dev mode (dashboard with hot reload)
-npm run dev
+bun run dev
+
+# Run tests
+bun run test
 
 # Run CLI locally
-node dist/cli.js --help
+bun dist/cli.js --help
 ```
 
 ---
