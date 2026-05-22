@@ -58,25 +58,111 @@ interface SessionProcess {
   proc: ChildProcess;
   sessionId: string;
   isProcessing: boolean;
+  lastActivityAt: number;
   textBuffer: string;
   toolCalls: ToolCall[];
   claudeSessionId: string | null;
   pendingPermission: PendingPermission | null;
 }
 
+export const WATCHDOG_INTERVAL_MS = 30000;
+export const SESSION_UNRESPONSIVE_MS = 3 * 60 * 1000;
+
+export function shouldRestartUnresponsiveSession({
+  lastActivityAt,
+  now,
+  killed,
+}: {
+  lastActivityAt: number;
+  now: number;
+  killed: boolean;
+}): boolean {
+  return now - lastActivityAt > SESSION_UNRESPONSIVE_MS && !killed;
+}
+
 class ProcessManager {
   private sessions = new Map<string, SessionProcess>();
   private messageQueues = new Map<string, string[]>();
 
+  constructor() {
+    const watchdog = setInterval(
+      () => this.checkHealth(),
+      WATCHDOG_INTERVAL_MS
+    );
+    watchdog.unref?.();
+  }
+
   private emitGlobalSystemLog(
     level: SystemLogLevel,
     sessionId: string,
-    message: string
+    message: string,
+    prefix?: string
   ): void {
     streamManager.emit(
       "global",
-      createSystemLogEvent({ level, sessionId, message })
+      createSystemLogEvent({ level, prefix, sessionId, message })
     );
+  }
+
+  private checkHealth(): void {
+    const now = Date.now();
+    for (const [sessionId, sp] of this.sessions.entries()) {
+      if (
+        !shouldRestartUnresponsiveSession({
+          lastActivityAt: sp.lastActivityAt,
+          now,
+          killed: sp.proc.killed,
+        })
+      ) {
+        continue;
+      }
+
+      this.emitGlobalSystemLog(
+        "warning",
+        sessionId,
+        `Session ${sessionId.slice(0, 8)} unresponsive for 3m. Restarting...`,
+        "[WATCHDOG]"
+      );
+
+      try {
+        sp.proc.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      this.sessions.delete(sessionId);
+
+      try {
+        const db = getDb();
+        db.prepare(
+          "UPDATE sessions SET status = 'idle', pid = NULL WHERE id = ?"
+        ).run(sessionId);
+      } catch {
+        // ignore
+      }
+
+      if (sp.isProcessing) {
+        this.requeueLastUserMessage(sessionId);
+      }
+    }
+  }
+
+  private requeueLastUserMessage(sessionId: string): void {
+    try {
+      const db = getDb();
+      const row = db
+        .prepare(
+          "SELECT content FROM session_messages WHERE session_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1"
+        )
+        .get(sessionId) as { content: string } | undefined;
+
+      if (!row?.content) return;
+
+      const queue = this.messageQueues.get(sessionId) ?? [];
+      queue.unshift(row.content);
+      this.messageQueues.set(sessionId, queue);
+    } catch {
+      // ignore
+    }
   }
 
   /**
@@ -136,6 +222,7 @@ class ProcessManager {
       proc,
       sessionId,
       isProcessing: false,
+      lastActivityAt: Date.now(),
       textBuffer: "",
       toolCalls: [],
       claudeSessionId: session.claude_session_id,
@@ -407,6 +494,8 @@ class ProcessManager {
     sp: SessionProcess,
     event: Record<string, unknown>
   ): void {
+    sp.lastActivityAt = Date.now();
+
     const type = event.type as string;
     const subtype = event.subtype as string | undefined;
 

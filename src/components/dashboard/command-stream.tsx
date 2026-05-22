@@ -84,7 +84,7 @@ export function CommandStream({
       if (event.type !== "system_log") return;
       const entry: StreamEntry = {
         type: mapSystemLevelToEntryType(event.level),
-        prefix: formatSystemPrefix(event.level),
+        prefix: event.prefix ?? formatSystemPrefix(event.level),
         text: event.message,
         time: event.timestamp,
       };

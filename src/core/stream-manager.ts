@@ -12,7 +12,7 @@ export type ChatStreamEvent =
   | { type: "turn_end"; cost_usd?: number; duration_ms?: number; session_id?: string }
   | { type: "error"; message: string }
   | { type: "status"; status: string; content?: string }
-  | { type: "system_log"; level: SystemLogLevel; message: string; session_id?: string; timestamp: string }
+  | { type: "system_log"; level: SystemLogLevel; prefix?: string; message: string; session_id?: string; timestamp: string }
   | { type: "message"; role: "user" | "assistant"; content: string; tool_calls?: ToolCall[] }
   // Interactive session events
   | { type: "permission_request"; tool_name: string; tool_input: Record<string, unknown>; request_id: string }
@@ -22,11 +22,13 @@ export type ChatStreamEvent =
 
 export function createSystemLogEvent({
   level,
+  prefix,
   message,
   sessionId,
   timestamp = new Date().toISOString(),
 }: {
   level: SystemLogLevel;
+  prefix?: string;
   message: string;
   sessionId?: string;
   timestamp?: string;
@@ -34,6 +36,7 @@ export function createSystemLogEvent({
   return {
     type: "system_log",
     level,
+    ...(prefix ? { prefix } : {}),
     message,
     session_id: sessionId,
     timestamp,
