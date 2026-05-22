@@ -2,7 +2,12 @@ import { spawn, execFileSync, type ChildProcess } from "child_process";
 import * as readline from "readline";
 import fs from "fs";
 import { getDb } from "./db";
-import { streamManager, type ToolCall } from "./stream-manager";
+import {
+  createSystemLogEvent,
+  streamManager,
+  type SystemLogLevel,
+  type ToolCall,
+} from "./stream-manager";
 import { onSessionExit } from "./task-lifecycle";
 
 // Resolve claude binary path once at module load
@@ -62,6 +67,17 @@ interface SessionProcess {
 class ProcessManager {
   private sessions = new Map<string, SessionProcess>();
   private messageQueues = new Map<string, string[]>();
+
+  private emitGlobalSystemLog(
+    level: SystemLogLevel,
+    sessionId: string,
+    message: string
+  ): void {
+    streamManager.emit(
+      "global",
+      createSystemLogEvent({ level, sessionId, message })
+    );
+  }
 
   /**
    * Ensure a persistent process exists for the session.
@@ -127,6 +143,11 @@ class ProcessManager {
     };
 
     this.sessions.set(sessionId, sp);
+    this.emitGlobalSystemLog(
+      "info",
+      sessionId,
+      `Session ${sessionId.slice(0, 8)} process started`
+    );
 
     // Update session status
     db.prepare(
@@ -168,6 +189,11 @@ class ProcessManager {
     // Handle process exit
     proc.on("exit", (code) => {
       this.sessions.delete(sessionId);
+      this.emitGlobalSystemLog(
+        code === 0 ? "success" : "warning",
+        sessionId,
+        `Session ${sessionId.slice(0, 8)} process exited with code ${code ?? "unknown"}`
+      );
 
       // Save any remaining text buffer as assistant message
       const content = sp.textBuffer.trim();
@@ -570,6 +596,12 @@ class ProcessManager {
   /** Kill the active process for a session */
   kill(sessionId: string): boolean {
     const sp = this.sessions.get(sessionId);
+    this.emitGlobalSystemLog(
+      "warning",
+      sessionId,
+      `Session ${sessionId.slice(0, 8)} kill requested`
+    );
+
     if (sp) {
       // Close stdin gracefully first
       try {
@@ -593,18 +625,33 @@ class ProcessManager {
       "UPDATE sessions SET status = 'killed', ended_at = datetime('now') WHERE id = ?"
     ).run(sessionId);
     streamManager.emit(sessionId, { type: "status", status: "killed" });
+    this.emitGlobalSystemLog(
+      "warning",
+      sessionId,
+      `Session ${sessionId.slice(0, 8)} killed`
+    );
 
     return true;
   }
 
   /** End a session (mark completed, no more turns) */
   endSession(sessionId: string): void {
+    this.emitGlobalSystemLog(
+      "info",
+      sessionId,
+      `Session ${sessionId.slice(0, 8)} completion requested`
+    );
     this.kill(sessionId);
     const db = getDb();
     db.prepare(
       "UPDATE sessions SET status = 'completed', ended_at = datetime('now') WHERE id = ?"
     ).run(sessionId);
     streamManager.emit(sessionId, { type: "status", status: "completed" });
+    this.emitGlobalSystemLog(
+      "success",
+      sessionId,
+      `Session ${sessionId.slice(0, 8)} completed`
+    );
   }
 
   killAll(): void {
