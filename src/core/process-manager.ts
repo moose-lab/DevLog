@@ -2,7 +2,12 @@ import { spawn, execFileSync, type ChildProcess } from "child_process";
 import * as readline from "readline";
 import fs from "fs";
 import { getDb } from "./db";
-import { streamManager, type ToolCall } from "./stream-manager";
+import {
+  createSystemLogEvent,
+  streamManager,
+  type SystemLogLevel,
+  type ToolCall,
+} from "./stream-manager";
 import { onSessionExit } from "./task-lifecycle";
 
 // Resolve claude binary path once at module load
@@ -53,15 +58,112 @@ interface SessionProcess {
   proc: ChildProcess;
   sessionId: string;
   isProcessing: boolean;
+  lastActivityAt: number;
   textBuffer: string;
   toolCalls: ToolCall[];
   claudeSessionId: string | null;
   pendingPermission: PendingPermission | null;
 }
 
+export const WATCHDOG_INTERVAL_MS = 30000;
+export const SESSION_UNRESPONSIVE_MS = 3 * 60 * 1000;
+
+export function shouldRestartUnresponsiveSession({
+  lastActivityAt,
+  now,
+  killed,
+}: {
+  lastActivityAt: number;
+  now: number;
+  killed: boolean;
+}): boolean {
+  return now - lastActivityAt > SESSION_UNRESPONSIVE_MS && !killed;
+}
+
 class ProcessManager {
   private sessions = new Map<string, SessionProcess>();
   private messageQueues = new Map<string, string[]>();
+
+  constructor() {
+    const watchdog = setInterval(
+      () => this.checkHealth(),
+      WATCHDOG_INTERVAL_MS
+    );
+    watchdog.unref?.();
+  }
+
+  private emitGlobalSystemLog(
+    level: SystemLogLevel,
+    sessionId: string,
+    message: string,
+    prefix?: string
+  ): void {
+    streamManager.emit(
+      "global",
+      createSystemLogEvent({ level, prefix, sessionId, message })
+    );
+  }
+
+  private checkHealth(): void {
+    const now = Date.now();
+    for (const [sessionId, sp] of this.sessions.entries()) {
+      if (
+        !shouldRestartUnresponsiveSession({
+          lastActivityAt: sp.lastActivityAt,
+          now,
+          killed: sp.proc.killed,
+        })
+      ) {
+        continue;
+      }
+
+      this.emitGlobalSystemLog(
+        "warning",
+        sessionId,
+        `Session ${sessionId.slice(0, 8)} unresponsive for 3m. Restarting...`,
+        "[WATCHDOG]"
+      );
+
+      try {
+        sp.proc.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      this.sessions.delete(sessionId);
+
+      try {
+        const db = getDb();
+        db.prepare(
+          "UPDATE sessions SET status = 'idle', pid = NULL WHERE id = ?"
+        ).run(sessionId);
+      } catch {
+        // ignore
+      }
+
+      if (sp.isProcessing) {
+        this.requeueLastUserMessage(sessionId);
+      }
+    }
+  }
+
+  private requeueLastUserMessage(sessionId: string): void {
+    try {
+      const db = getDb();
+      const row = db
+        .prepare(
+          "SELECT content FROM session_messages WHERE session_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1"
+        )
+        .get(sessionId) as { content: string } | undefined;
+
+      if (!row?.content) return;
+
+      const queue = this.messageQueues.get(sessionId) ?? [];
+      queue.unshift(row.content);
+      this.messageQueues.set(sessionId, queue);
+    } catch {
+      // ignore
+    }
+  }
 
   /**
    * Ensure a persistent process exists for the session.
@@ -120,6 +222,7 @@ class ProcessManager {
       proc,
       sessionId,
       isProcessing: false,
+      lastActivityAt: Date.now(),
       textBuffer: "",
       toolCalls: [],
       claudeSessionId: session.claude_session_id,
@@ -127,6 +230,11 @@ class ProcessManager {
     };
 
     this.sessions.set(sessionId, sp);
+    this.emitGlobalSystemLog(
+      "info",
+      sessionId,
+      `Session ${sessionId.slice(0, 8)} process started`
+    );
 
     // Update session status
     db.prepare(
@@ -168,6 +276,11 @@ class ProcessManager {
     // Handle process exit
     proc.on("exit", (code) => {
       this.sessions.delete(sessionId);
+      this.emitGlobalSystemLog(
+        code === 0 ? "success" : "warning",
+        sessionId,
+        `Session ${sessionId.slice(0, 8)} process exited with code ${code ?? "unknown"}`
+      );
 
       // Save any remaining text buffer as assistant message
       const content = sp.textBuffer.trim();
@@ -381,6 +494,8 @@ class ProcessManager {
     sp: SessionProcess,
     event: Record<string, unknown>
   ): void {
+    sp.lastActivityAt = Date.now();
+
     const type = event.type as string;
     const subtype = event.subtype as string | undefined;
 
@@ -570,6 +685,12 @@ class ProcessManager {
   /** Kill the active process for a session */
   kill(sessionId: string): boolean {
     const sp = this.sessions.get(sessionId);
+    this.emitGlobalSystemLog(
+      "warning",
+      sessionId,
+      `Session ${sessionId.slice(0, 8)} kill requested`
+    );
+
     if (sp) {
       // Close stdin gracefully first
       try {
@@ -593,18 +714,33 @@ class ProcessManager {
       "UPDATE sessions SET status = 'killed', ended_at = datetime('now') WHERE id = ?"
     ).run(sessionId);
     streamManager.emit(sessionId, { type: "status", status: "killed" });
+    this.emitGlobalSystemLog(
+      "warning",
+      sessionId,
+      `Session ${sessionId.slice(0, 8)} killed`
+    );
 
     return true;
   }
 
   /** End a session (mark completed, no more turns) */
   endSession(sessionId: string): void {
+    this.emitGlobalSystemLog(
+      "info",
+      sessionId,
+      `Session ${sessionId.slice(0, 8)} completion requested`
+    );
     this.kill(sessionId);
     const db = getDb();
     db.prepare(
       "UPDATE sessions SET status = 'completed', ended_at = datetime('now') WHERE id = ?"
     ).run(sessionId);
     streamManager.emit(sessionId, { type: "status", status: "completed" });
+    this.emitGlobalSystemLog(
+      "success",
+      sessionId,
+      `Session ${sessionId.slice(0, 8)} completed`
+    );
   }
 
   killAll(): void {

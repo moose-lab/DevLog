@@ -68,6 +68,22 @@ function formatToolInput(name: string, input: Record<string, unknown>): string {
   }
 }
 
+export function formatToolOutputForDisplay(output: string): string {
+  const lines = output.split("\n");
+
+  if (lines.length <= 20) {
+    return output;
+  }
+
+  const head = lines.slice(0, 10);
+  const tail = lines.slice(-5);
+  const truncatedCount = lines.length - head.length - tail.length;
+
+  return [...head, `... (truncated ${truncatedCount} lines)`, ...tail].join(
+    "\n",
+  );
+}
+
 // Collapsible tool call block
 function ToolCallBlock({
   name,
@@ -104,8 +120,7 @@ function ToolCallBlock({
       {open && result && (
         <div className="border-t border-border/50 px-2.5 py-2 max-h-[200px] overflow-auto">
           <pre className="whitespace-pre-wrap text-[11px] text-muted-foreground leading-relaxed">
-            {result.output.slice(0, 2000)}
-            {result.output.length > 2000 && "\n... (truncated)"}
+            {formatToolOutputForDisplay(result.output)}
           </pre>
         </div>
       )}

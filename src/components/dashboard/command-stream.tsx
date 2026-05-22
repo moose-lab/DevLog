@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/core/dashboard-utils";
 import type { RecentActivity } from "@/hooks/use-task-analytics";
 import type { Session, Task } from "@/core/types-dashboard";
+import type { ChatStreamEvent, SystemLogLevel } from "@/core/stream-manager";
 
 interface StreamEntry {
-  type: "system" | "agent" | "success" | "warning";
+  type: "system" | "success" | "warning" | "error";
   prefix: string;
   text: string;
   time: string;
@@ -22,102 +23,79 @@ interface CommandStreamProps {
 
 const PREFIX_COLORS: Record<string, string> = {
   system: "text-zinc-400",
-  agent: "text-emerald-400",
   success: "text-emerald-400",
   warning: "text-amber-400",
+  error: "text-red-400",
 };
 
 const TEXT_COLORS: Record<string, string> = {
   system: "text-zinc-500",
-  agent: "text-zinc-400",
   success: "text-emerald-400/80",
   warning: "text-amber-400/80",
+  error: "text-red-400/80",
 };
 
+function mapSystemLevelToEntryType(
+  level: SystemLogLevel
+): StreamEntry["type"] {
+  switch (level) {
+    case "success":
+      return "success";
+    case "warning":
+      return "warning";
+    case "error":
+      return "error";
+    case "info":
+    default:
+      return "system";
+  }
+}
+
+function formatSystemPrefix(level: SystemLogLevel): string {
+  switch (level) {
+    case "success":
+      return "[SUCCESS]";
+    case "warning":
+      return "[WARNING]";
+    case "error":
+      return "[ERROR]";
+    case "info":
+    default:
+      return "[SYSTEM]";
+  }
+}
+
 export function CommandStream({
-  activities,
-  sessions,
-  stuckTasks,
   className,
 }: CommandStreamProps) {
-  const entries = useMemo(() => {
-    const items: StreamEntry[] = [];
+  const [entries, setEntries] = useState<StreamEntry[]>([]);
 
-    // From recent task activity
-    for (const { task } of activities) {
-      const branch = task.worktree_name || "main";
+  useEffect(() => {
+    const source = new EventSource("/api/devlog/stream");
 
-      switch (task.status) {
-        case "done":
-          items.push({
-            type: "success",
-            prefix: "[SUCCESS]",
-            text: `Task '${task.title}' completed`,
-            time: task.updated_at,
-          });
-          break;
-        case "in_progress":
-          items.push({
-            type: "agent",
-            prefix: `[AGENT:${branch.toUpperCase().slice(0, 12)}]`,
-            text: `Working on: ${task.title}`,
-            time: task.updated_at,
-          });
-          break;
-        case "todo":
-          items.push({
-            type: "system",
-            prefix: "[SYSTEM]",
-            text: `Task '${task.title}' queued`,
-            time: task.updated_at,
-          });
-          break;
+    source.onmessage = (message) => {
+      let event: ChatStreamEvent;
+      try {
+        event = JSON.parse(message.data) as ChatStreamEvent;
+      } catch {
+        return;
       }
-    }
 
-    // Stuck task warnings
-    for (const task of stuckTasks) {
-      items.push({
-        type: "warning",
-        prefix: "[WARNING]",
-        text: `Task '${task.title}' stuck for 48h+`,
-        time: task.updated_at,
-      });
-    }
+      if (event.type !== "system_log") return;
+      const entry: StreamEntry = {
+        type: mapSystemLevelToEntryType(event.level),
+        prefix: event.prefix ?? formatSystemPrefix(event.level),
+        text: event.message,
+        time: event.timestamp,
+      };
 
-    // Running sessions
-    for (const session of sessions.filter((s) => s.status === "running")) {
-      const name =
-        session.branch_name ||
-        session.worktree_name ||
-        session.id.slice(0, 8);
-      items.push({
-        type: "agent",
-        prefix: `[AGENT:${name.toUpperCase().slice(0, 12)}]`,
-        text: "Session active — processing...",
-        time: session.started_at,
-      });
-    }
+      setEntries((current) => [entry, ...current].slice(0, 20));
+    };
 
-    // Completed sessions
-    for (const session of sessions
-      .filter((s) => s.status === "completed")
-      .slice(0, 3)) {
-      items.push({
-        type: "system",
-        prefix: "[SYSTEM]",
-        text: `Session ${session.id.slice(0, 8)} completed`,
-        time: session.ended_at || session.started_at,
-      });
-    }
-
-    // Sort by time descending
-    items.sort(
-      (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()
-    );
-
-    return items.slice(0, 14);
-  }, [activities, sessions, stuckTasks]);
+    return () => {
+      source.close();
+    };
+  }, []);
 
   return (
     <div
