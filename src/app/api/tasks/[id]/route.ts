@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/core/db";
+import { normalizeReadyTaskStatus } from "@/core/task-readiness";
 import type { Task } from "@/core/types-dashboard";
 
 export async function GET(
@@ -31,17 +32,25 @@ export async function PATCH(
 
   const fields: string[] = [];
   const values: unknown[] = [];
+  const nextPrompt = "prompt" in body ? body.prompt : existing.prompt;
+  const requestedStatus = ("status" in body ? body.status : existing.status) as Task["status"];
+  const nextStatus = normalizeReadyTaskStatus(requestedStatus, nextPrompt);
 
-  for (const key of ["title", "description", "status", "priority", "worktree_name", "session_id", "sort_order", "prompt"] as const) {
+  for (const key of ["title", "description", "priority", "worktree_name", "session_id", "sort_order", "prompt"] as const) {
     if (key in body) {
       fields.push(`${key} = ?`);
       values.push(body[key]);
     }
   }
 
-  if (body.status === "done" && existing.status !== "done") {
+  if ("status" in body || nextStatus !== existing.status) {
+    fields.push("status = ?");
+    values.push(nextStatus);
+  }
+
+  if (nextStatus === "done" && existing.status !== "done") {
     fields.push("completed_at = datetime('now')");
-  } else if (body.status && body.status !== "done") {
+  } else if (("status" in body || nextStatus !== existing.status) && nextStatus !== "done") {
     fields.push("completed_at = NULL");
   }
 

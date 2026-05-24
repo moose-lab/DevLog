@@ -23,9 +23,10 @@ interface KanbanColumnProps {
   onDeleteTask: (id: string) => void;
   onClickTask: (task: Task) => void;
   onExecuteTask?: (id: string) => void;
+  onPauseTask?: (sessionId: string) => void;
 }
 
-export function KanbanColumn({ status, tasks, taskSessions, onDeleteTask, onClickTask, onExecuteTask }: KanbanColumnProps) {
+export function KanbanColumn({ status, tasks, taskSessions, onDeleteTask, onClickTask, onExecuteTask, onPauseTask }: KanbanColumnProps) {
   const config = COLUMN_CONFIG[status];
 
   return (
@@ -56,6 +57,7 @@ export function KanbanColumn({ status, tasks, taskSessions, onDeleteTask, onClic
                 onDelete={onDeleteTask}
                 onClick={onClickTask}
                 onExecute={onExecuteTask}
+                onPause={onPauseTask}
               />
             ))}
             {provided.placeholder}

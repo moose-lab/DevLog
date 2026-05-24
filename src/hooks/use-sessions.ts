@@ -44,7 +44,7 @@ export function useSessions() {
     return null;
   };
 
-  const controlSession = async (id: string, action: "kill" | "end") => {
+  const controlSession = async (id: string, action: "kill" | "pause" | "end") => {
     await fetch(`/api/sessions/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

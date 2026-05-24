@@ -5,7 +5,9 @@ import { Draggable } from "@hello-pangea/dnd";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Trash2, GitBranch, Terminal, ChevronRight, Play } from "lucide-react";
+import { Trash2, GitBranch, Terminal, ChevronRight, Pause, Play } from "lucide-react";
+import { canExecuteTaskFromCard, canPauseTaskFromCard } from "./task-card-actions";
+import { isActiveSessionStatus } from "@/core/task-readiness";
 import type { Task, Session } from "@/core/types-dashboard";
 import { cn } from "@/core/dashboard-utils";
 import dayjs from "dayjs";
@@ -37,11 +39,14 @@ interface TaskCardProps {
   onDelete: (id: string) => void;
   onClick: (task: Task) => void;
   onExecute?: (id: string) => void;
+  onPause?: (sessionId: string) => void;
 }
 
-export function TaskCard({ task, index, session, onDelete, onClick, onExecute }: TaskCardProps) {
+export function TaskCard({ task, index, session, onDelete, onClick, onExecute, onPause }: TaskCardProps) {
   const router = useRouter();
-  const isLive = session?.status === "running" || session?.status === "idle";
+  const isLive = isActiveSessionStatus(session?.status);
+  const canExecute = !!onExecute && canExecuteTaskFromCard(task, session);
+  const canPause = !!onPause && canPauseTaskFromCard(task, session);
 
   return (
     <Draggable draggableId={task.id} index={index}>
@@ -61,11 +66,11 @@ export function TaskCard({ task, index, session, onDelete, onClick, onExecute }:
               {task.title}
             </span>
             <div className="flex items-center gap-0.5 shrink-0">
-              {onExecute && (task.status === "todo" || task.status === "blocked") && task.prompt && !session && (
+              {canExecute && (
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6 text-muted-foreground hover:text-green-500"
+                  className="h-6 w-6 text-green-600 hover:text-green-500"
                   onClick={(e) => {
                     e.stopPropagation();
                     onExecute(task.id);
@@ -73,6 +78,20 @@ export function TaskCard({ task, index, session, onDelete, onClick, onExecute }:
                   title="Launch agent"
                 >
                   <Play className="h-3 w-3" />
+                </Button>
+              )}
+              {canPause && session && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-amber-500 hover:text-amber-400"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPause(session.id);
+                  }}
+                  title="Pause session"
+                >
+                  <Pause className="h-3 w-3" />
                 </Button>
               )}
               <Button

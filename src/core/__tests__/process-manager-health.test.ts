@@ -34,4 +34,14 @@ test("shouldRestartUnresponsiveSession only restarts live stale processes", () =
     }),
     false,
   );
+
+  assert.equal(
+    shouldRestartUnresponsiveSession({
+      lastActivityAt: now - SESSION_UNRESPONSIVE_MS - 1,
+      now,
+      killed: false,
+      paused: true,
+    }),
+    false,
+  );
 });

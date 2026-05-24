@@ -58,6 +58,7 @@ interface SessionProcess {
   proc: ChildProcess;
   sessionId: string;
   isProcessing: boolean;
+  paused: boolean;
   lastActivityAt: number;
   textBuffer: string;
   toolCalls: ToolCall[];
@@ -72,12 +73,14 @@ export function shouldRestartUnresponsiveSession({
   lastActivityAt,
   now,
   killed,
+  paused = false,
 }: {
   lastActivityAt: number;
   now: number;
   killed: boolean;
+  paused?: boolean;
 }): boolean {
-  return now - lastActivityAt > SESSION_UNRESPONSIVE_MS && !killed;
+  return now - lastActivityAt > SESSION_UNRESPONSIVE_MS && !killed && !paused;
 }
 
 class ProcessManager {
@@ -112,6 +115,7 @@ class ProcessManager {
           lastActivityAt: sp.lastActivityAt,
           now,
           killed: sp.proc.killed,
+          paused: sp.paused,
         })
       ) {
         continue;
@@ -176,6 +180,13 @@ class ProcessManager {
   private ensureProcess(sessionId: string): SessionProcess | null {
     const existing = this.sessions.get(sessionId);
     if (existing && !existing.proc.killed) {
+      if (existing.paused) {
+        existing.proc.kill("SIGCONT");
+        existing.paused = false;
+        const db = getDb();
+        db.prepare("UPDATE sessions SET status = 'running' WHERE id = ?").run(sessionId);
+        streamManager.emit(sessionId, { type: "status", status: "running" });
+      }
       return existing;
     }
 
@@ -222,6 +233,7 @@ class ProcessManager {
       proc,
       sessionId,
       isProcessing: false,
+      paused: false,
       lastActivityAt: Date.now(),
       textBuffer: "",
       toolCalls: [],
@@ -718,6 +730,35 @@ class ProcessManager {
       "warning",
       sessionId,
       `Session ${sessionId.slice(0, 8)} killed`
+    );
+
+    return true;
+  }
+
+  /** Pause the active process for a session without ending the session */
+  pause(sessionId: string): boolean {
+    const sp = this.sessions.get(sessionId);
+    this.emitGlobalSystemLog(
+      "info",
+      sessionId,
+      `Session ${sessionId.slice(0, 8)} pause requested`
+    );
+
+    if (sp && !sp.proc.killed) {
+      sp.proc.kill("SIGSTOP");
+      sp.paused = true;
+      sp.isProcessing = false;
+    }
+
+    const db = getDb();
+    db.prepare(
+      "UPDATE sessions SET status = 'paused' WHERE id = ? AND status NOT IN ('completed', 'killed')"
+    ).run(sessionId);
+    streamManager.emit(sessionId, { type: "status", status: "paused" });
+    this.emitGlobalSystemLog(
+      "info",
+      sessionId,
+      `Session ${sessionId.slice(0, 8)} paused`
     );
 
     return true;
