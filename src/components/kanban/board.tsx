@@ -27,6 +27,14 @@ export function KanbanBoard() {
     }
   };
 
+  const handlePauseTask = async (sessionId: string) => {
+    await fetch(`/api/sessions/${sessionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "pause" }),
+    });
+  };
+
   const handleDragEnd = async (result: DropResult) => {
     const { source, destination } = result;
     if (!destination) return;
@@ -120,6 +128,7 @@ export function KanbanBoard() {
               onDeleteTask={deleteTask}
               onClickTask={handleClickTask}
               onExecuteTask={handleExecuteTask}
+              onPauseTask={handlePauseTask}
             />
           ))}
         </div>

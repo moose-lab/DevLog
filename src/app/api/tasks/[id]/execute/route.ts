@@ -6,6 +6,7 @@ import { getProject } from "@/core/project-adapter";
 import { createWorktree, listWorktrees } from "@/core/worktree-manager";
 import { processManager } from "@/core/process-manager";
 import { fileWatcher } from "@/core/file-watcher";
+import { hasTaskPrompt } from "@/core/task-readiness";
 import { slugify, buildPromptTemplate } from "@/core/task-lifecycle";
 import type { Task, Session } from "@/core/types-dashboard";
 
@@ -25,7 +26,7 @@ export async function POST(
   if (!task) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
-  if (!task.prompt) {
+  if (!hasTaskPrompt(task.prompt)) {
     return NextResponse.json(
       { error: "Task has no prompt. Add a prompt before executing." },
       { status: 400 }

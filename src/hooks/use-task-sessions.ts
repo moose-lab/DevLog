@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { useSessions } from "./use-sessions";
+import { isActiveSessionStatus } from "@/core/task-readiness";
 import type { Session } from "@/core/types-dashboard";
 
 /** Returns a Map<task_id, Session> for O(1) lookups on task cards. */
@@ -11,7 +12,7 @@ export function useTaskSessions(): Map<string, Session> {
   return useMemo(() => {
     const map = new Map<string, Session>();
     for (const session of sessions) {
-      if (session.task_id) {
+      if (session.task_id && isActiveSessionStatus(session.status)) {
         // Keep the most active session if multiple exist for a task
         const existing = map.get(session.task_id);
         if (!existing || isMoreActive(session, existing)) {

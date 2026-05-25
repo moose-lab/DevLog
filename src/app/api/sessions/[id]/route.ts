@@ -26,7 +26,7 @@ export async function PATCH(
   const { id } = await params;
   const body = await req.json();
   const { action, message, approved, reason } = body as {
-    action?: "send" | "kill" | "end" | "respond_permission";
+    action?: "send" | "kill" | "pause" | "end" | "respond_permission";
     message?: string;
     approved?: boolean;
     reason?: string;
@@ -57,6 +57,10 @@ export async function PATCH(
 
     case "kill":
       processManager.kill(id);
+      break;
+
+    case "pause":
+      processManager.pause(id);
       break;
 
     case "end":
