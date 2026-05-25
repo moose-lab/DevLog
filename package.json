@@ -17,7 +17,7 @@
     "build:cli": "tsup",
     "build:web": "next build",
     "start": "next start",
-    "test": "node --test --import tsx --test-reporter spec 'src/core/__tests__/*.test.ts'",
+    "test": "node --test --import tsx --test-reporter spec 'src/core/__tests__/*.test.ts' 'src/components/sessions/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

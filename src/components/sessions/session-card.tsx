@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Clock,
 } from "lucide-react";
+import { isActiveSessionStatus } from "@/core/task-readiness";
 import type { Session } from "@/core/types-dashboard";
 
 interface SessionCardProps {
@@ -37,7 +38,7 @@ export function SessionCard({
   onControl,
   onDelete,
 }: SessionCardProps) {
-  const isActive = session.status === "running" || session.status === "idle" || session.status === "paused";
+  const isActive = isActiveSessionStatus(session.status);
 
   return (
     <Card className="group hover:border-primary/30 transition-colors">
@@ -78,7 +79,7 @@ export function SessionCard({
             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <MessageSquare className="h-3 w-3" />
-            <span>Open session</span>
+            <span>Open task run</span>
           </Link>
           <div className="flex items-center gap-0.5">
             {isActive && (

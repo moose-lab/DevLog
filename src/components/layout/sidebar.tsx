@@ -30,7 +30,7 @@ const NAV_SECTIONS = [
     label: "WORK",
     items: [
       { href: "/tasks", label: "Tasks", icon: KanbanSquare },
-      { href: "/sessions", label: "AI Work Log", icon: Terminal },
+      { href: "/sessions", label: "Sessions", icon: Terminal },
     ],
   },
   {

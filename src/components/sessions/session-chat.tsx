@@ -6,9 +6,11 @@ import {
   type ChatMsg,
   type PermissionRequest,
 } from "@/hooks/use-session-chat";
+import type { SessionStatus } from "@/core/types-dashboard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import ReactMarkdown from "react-markdown";
+import { isActiveSessionStatus } from "@/core/task-readiness";
 import {
   Send,
   ChevronDown,
@@ -82,6 +84,49 @@ export function formatToolOutputForDisplay(output: string): string {
   return [...head, `... (truncated ${truncatedCount} lines)`, ...tail].join(
     "\n",
   );
+}
+
+export function isInteractiveSessionStatus(
+  status: SessionStatus | string | null | undefined,
+): boolean {
+  return isActiveSessionStatus(status as SessionStatus | null | undefined);
+}
+
+export function isTerminalSessionStatus(
+  status: SessionStatus | string | null | undefined,
+): boolean {
+  return status === "completed" || status === "failed" || status === "killed";
+}
+
+export function getSessionInstructionInputCopy({
+  processing,
+  sessionEnded,
+}: {
+  processing: boolean;
+  sessionEnded: boolean;
+}): { placeholder: string; helperText: string; disabledText: string } {
+  if (sessionEnded) {
+    return {
+      placeholder: "",
+      helperText: "",
+      disabledText: "Session ended",
+    };
+  }
+
+  if (processing) {
+    return {
+      placeholder: "Queue a follow-up instruction for this task session...",
+      helperText:
+        "Instruction will be queued and sent when the current turn finishes",
+      disabledText: "Session ended",
+    };
+  }
+
+  return {
+    placeholder: "Send the next instruction for this task session...",
+    helperText: "Enter to send, Shift+Enter for a new line",
+    disabledText: "Session ended",
+  };
 }
 
 // Collapsible tool call block
@@ -327,9 +372,12 @@ export function SessionChat({ sessionId, isActive }: SessionChatProps) {
   const [autoScroll, setAutoScroll] = useState(true);
 
   // Input is always available unless the session has ended
-  const sessionEnded =
-    sessionStatus === "completed" || sessionStatus === "killed";
+  const sessionEnded = isTerminalSessionStatus(sessionStatus);
   const canSend = isActive && !sessionEnded;
+  const inputCopy = getSessionInstructionInputCopy({
+    processing,
+    sessionEnded,
+  });
 
   // Auto-scroll
   useEffect(() => {
@@ -484,11 +532,7 @@ export function SessionChat({ sessionId, isActive }: SessionChatProps) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={
-                processing
-                  ? "Type to queue a follow-up message..."
-                  : "Send a message..."
-              }
+              placeholder={inputCopy.placeholder}
               className="flex-1 min-h-[44px] max-h-[160px] resize-none text-sm"
               rows={1}
               disabled={sending}
@@ -508,14 +552,14 @@ export function SessionChat({ sessionId, isActive }: SessionChatProps) {
             </Button>
           </div>
           <p className="text-[10px] text-muted-foreground/60 mt-1.5 px-1">
-            {processing
-              ? "Message will be queued and sent when current turn finishes"
-              : "Enter to send, Shift+Enter for new line"}
+            {inputCopy.helperText}
           </p>
         </div>
       ) : (
         <div className="shrink-0 border-t border-border px-4 py-3 bg-muted/10 text-center">
-          <p className="text-xs text-muted-foreground">Session ended</p>
+          <p className="text-xs text-muted-foreground">
+            {inputCopy.disabledText}
+          </p>
         </div>
       )}
     </div>
