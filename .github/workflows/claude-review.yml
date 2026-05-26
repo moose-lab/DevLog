@@ -25,6 +25,12 @@ jobs:
       github.event_name == 'pull_request' ||
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude'))
     runs-on: ubuntu-latest
+    # Job-level env propagates into composite-action sub-steps; step-level
+    # env does not. claude-code-action's internal validation runs inside one
+    # such sub-step, so the credentials must be hoisted here.
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,15 +40,6 @@ jobs:
 
       - name: Claude review
         uses: anthropics/claude-code-action@v1
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Route Messages-API calls through UniVibe's Anthropic-shape proxy.
-          # NOTE: this proxy silently substitutes GPT models for claude-* names
-          # (verified via probe: claude-sonnet-4-6 → gpt-5.4, claude-haiku-4-5
-          # → gpt-5.4-mini). The reviewer's actual model is GPT, not Claude.
-          # The OIDC App-token exchange still hits Anthropic directly and is
-          # unaffected by this base URL.
-          ANTHROPIC_BASE_URL: https://api.univibe.cc/anthropic
         with:
           prompt: |
             You are reviewing a pull request in moose-lab/DevLog, a TypeScript /
