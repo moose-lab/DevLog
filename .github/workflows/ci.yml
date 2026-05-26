@@ -37,6 +37,12 @@ jobs:
         run: bun run typecheck
 
       - name: Test
+        # TZ is pinned to Asia/Shanghai because cost-tracker.test.ts uses
+        # +08:00 timestamps and aggregateCostReport bucket boundaries are
+        # computed via dayjs(...).startOf("day"), which is system-TZ-coupled.
+        # TODO: make aggregateCostReport TZ-agnostic and drop this pin.
+        env:
+          TZ: Asia/Shanghai
         run: bun run test
 
       - name: Build (Next.js)
