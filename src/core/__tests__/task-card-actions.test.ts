@@ -39,6 +39,8 @@ function session(overrides: Partial<Session>): Session {
     claude_session_id: null,
     coding_agent_id: "general-coding-agent",
     agent_team_id: "implementation-review-team",
+    session_auth_mode: "backend-oauth",
+    agent_api_key_env_var: null,
     prompt: null,
     exit_code: null,
     log_path: null,

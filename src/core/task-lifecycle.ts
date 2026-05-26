@@ -6,6 +6,10 @@ import {
   buildAgentExecutionInstructions,
   type AgentExecutionConfig,
 } from "./agent-presets";
+import {
+  buildSessionRuntimeAuthInstructions,
+  type SessionRuntimeAuthConfig,
+} from "./session-runtime-auth";
 
 export function slugify(text: string): string {
   return text
@@ -21,6 +25,7 @@ export function buildPromptTemplate(
   worktreePath: string,
   branchName: string,
   agentConfig?: AgentExecutionConfig,
+  runtimeAuthConfig?: SessionRuntimeAuthConfig,
 ): string {
   const parts = [
     `# Task: ${task.title}`,
@@ -36,6 +41,9 @@ export function buildPromptTemplate(
     parts.push(
       "## Agent Execution",
       buildAgentExecutionInstructions(agentConfig),
+      ...(runtimeAuthConfig
+        ? [buildSessionRuntimeAuthInstructions(runtimeAuthConfig)]
+        : []),
       "",
     );
   }

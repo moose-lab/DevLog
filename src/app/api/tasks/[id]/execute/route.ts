@@ -12,6 +12,10 @@ import {
   getAgentExecutionInputFromPayload,
   resolveAgentExecutionConfig,
 } from "@/core/agent-presets";
+import {
+  getSessionRuntimeAuthInputFromPayload,
+  resolveSessionRuntimeAuthConfig,
+} from "@/core/session-runtime-auth";
 import type { Task, Session } from "@/core/types-dashboard";
 
 export async function POST(
@@ -29,6 +33,9 @@ export async function POST(
   }
   const agentConfig = resolveAgentExecutionConfig(
     getAgentExecutionInputFromPayload(payload),
+  );
+  const runtimeAuthConfig = resolveSessionRuntimeAuthConfig(
+    getSessionRuntimeAuthInputFromPayload(payload),
   );
 
   // 1. Fetch and validate task
@@ -94,15 +101,17 @@ export async function POST(
     worktree.path,
     branchName,
     agentConfig,
+    runtimeAuthConfig,
   );
 
   const session = db
     .prepare(
       `INSERT INTO sessions (
         id, project_id, task_id, worktree_name, worktree_path, branch_name,
-        status, coding_agent_id, agent_team_id, prompt
+        status, coding_agent_id, agent_team_id, session_auth_mode,
+        agent_api_key_env_var, prompt
       )
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
        RETURNING *`
     )
     .get(
@@ -114,6 +123,8 @@ export async function POST(
       branchName,
       agentConfig.codingAgent.id,
       agentConfig.agentTeam.id,
+      runtimeAuthConfig.mode,
+      runtimeAuthConfig.agentApiKeyEnvVar,
       prompt
     ) as Session;
 

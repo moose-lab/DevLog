@@ -106,6 +106,8 @@ export default function SessionDetailPage() {
             <AgentExecutionBadges
               codingAgentId={session.coding_agent_id}
               agentTeamId={session.agent_team_id}
+              sessionAuthMode={session.session_auth_mode}
+              agentApiKeyEnvVar={session.agent_api_key_env_var}
             />
           </div>
         </div>

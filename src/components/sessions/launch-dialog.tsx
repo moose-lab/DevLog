@@ -24,6 +24,11 @@ import {
   DEFAULT_AGENT_TEAM_ID,
   DEFAULT_CODING_AGENT_ID,
 } from "@/core/agent-presets";
+import {
+  DEFAULT_AGENT_API_KEY_ENV_VAR,
+  DEFAULT_SESSION_AUTH_MODE,
+  type SessionRuntimeAuthMode,
+} from "@/core/session-runtime-auth";
 import { AgentSelector } from "./agent-selector";
 import type { Worktree } from "@/core/types-dashboard";
 
@@ -43,6 +48,8 @@ interface LaunchDialogProps {
     prompt: string;
     coding_agent_id: string;
     agent_team_id: string;
+    session_auth_mode: SessionRuntimeAuthMode;
+    agent_api_key_env_var?: string;
   }) => Promise<{ id: string } | null>;
 }
 
@@ -53,6 +60,11 @@ export function LaunchDialog({ onSubmit }: LaunchDialogProps) {
   const [selectedWorktree, setSelectedWorktree] = useState("");
   const [codingAgentId, setCodingAgentId] = useState(DEFAULT_CODING_AGENT_ID);
   const [agentTeamId, setAgentTeamId] = useState(DEFAULT_AGENT_TEAM_ID);
+  const [sessionAuthMode, setSessionAuthMode] =
+    useState<SessionRuntimeAuthMode>(DEFAULT_SESSION_AUTH_MODE);
+  const [agentApiKeyEnvVar, setAgentApiKeyEnvVar] = useState(
+    DEFAULT_AGENT_API_KEY_ENV_VAR,
+  );
   const [prompt, setPrompt] = useState("");
   const [launching, setLaunching] = useState(false);
 
@@ -91,10 +103,14 @@ export function LaunchDialog({ onSubmit }: LaunchDialogProps) {
         prompt: prompt.trim(),
         coding_agent_id: codingAgentId,
         agent_team_id: agentTeamId,
+        session_auth_mode: sessionAuthMode,
+        agent_api_key_env_var: agentApiKeyEnvVar,
       });
 
       setPrompt("");
       setSelectedWorktree("");
+      setSessionAuthMode(DEFAULT_SESSION_AUTH_MODE);
+      setAgentApiKeyEnvVar(DEFAULT_AGENT_API_KEY_ENV_VAR);
       setOpen(false);
 
       // Navigate directly to the new session
@@ -164,8 +180,12 @@ export function LaunchDialog({ onSubmit }: LaunchDialogProps) {
           <AgentSelector
             codingAgentId={codingAgentId}
             agentTeamId={agentTeamId}
+            sessionAuthMode={sessionAuthMode}
+            agentApiKeyEnvVar={agentApiKeyEnvVar}
             onCodingAgentChange={setCodingAgentId}
             onAgentTeamChange={setAgentTeamId}
+            onSessionAuthModeChange={setSessionAuthMode}
+            onAgentApiKeyEnvVarChange={setAgentApiKeyEnvVar}
           />
 
           <Button

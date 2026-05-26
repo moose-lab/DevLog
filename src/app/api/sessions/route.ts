@@ -8,6 +8,11 @@ import {
   getAgentExecutionInputFromPayload,
   resolveAgentExecutionConfig,
 } from "@/core/agent-presets";
+import {
+  buildSessionRuntimeAuthInstructions,
+  getSessionRuntimeAuthInputFromPayload,
+  resolveSessionRuntimeAuthConfig,
+} from "@/core/session-runtime-auth";
 import type { Session } from "@/core/types-dashboard";
 
 export async function GET(req: NextRequest) {
@@ -22,7 +27,12 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const db = getDb();
   const projectId = resolveProjectId(req);
-  const body = await req.json();
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
 
   const {
     task_id,
@@ -30,7 +40,7 @@ export async function POST(req: NextRequest) {
     worktree_path,
     branch_name,
     prompt,
-  } = body;
+  } = body as Record<string, unknown>;
   if (!prompt) {
     return NextResponse.json({ error: "prompt is required" }, { status: 400 });
   }
@@ -42,20 +52,25 @@ export async function POST(req: NextRequest) {
   const agentConfig = resolveAgentExecutionConfig(
     getAgentExecutionInputFromPayload(body),
   );
+  const runtimeAuthConfig = resolveSessionRuntimeAuthConfig(
+    getSessionRuntimeAuthInputFromPayload(body),
+  );
   const sessionPrompt = [
     String(prompt).trim(),
     "",
     "## Agent Execution",
     buildAgentExecutionInstructions(agentConfig),
+    buildSessionRuntimeAuthInstructions(runtimeAuthConfig),
   ].join("\n");
 
   const session = db
     .prepare(
       `INSERT INTO sessions (
         id, project_id, task_id, worktree_name, worktree_path, branch_name,
-        status, coding_agent_id, agent_team_id, prompt
+        status, coding_agent_id, agent_team_id, session_auth_mode,
+        agent_api_key_env_var, prompt
       )
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
        RETURNING *`
     )
     .get(
@@ -67,6 +82,8 @@ export async function POST(req: NextRequest) {
       branch_name ?? null,
       agentConfig.codingAgent.id,
       agentConfig.agentTeam.id,
+      runtimeAuthConfig.mode,
+      runtimeAuthConfig.agentApiKeyEnvVar,
       sessionPrompt
     ) as Session;
 

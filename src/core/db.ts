@@ -6,6 +6,7 @@ import {
   DEFAULT_AGENT_TEAM_ID,
   DEFAULT_CODING_AGENT_ID,
 } from "./agent-presets";
+import { DEFAULT_SESSION_AUTH_MODE } from "./session-runtime-auth";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "devlog.db");
@@ -48,6 +49,8 @@ export function getDb(): Database.Database {
         claude_command TEXT, claude_session_id TEXT,
         coding_agent_id TEXT NOT NULL DEFAULT '${DEFAULT_CODING_AGENT_ID}',
         agent_team_id TEXT NOT NULL DEFAULT '${DEFAULT_AGENT_TEAM_ID}',
+        session_auth_mode TEXT NOT NULL DEFAULT '${DEFAULT_SESSION_AUTH_MODE}',
+        agent_api_key_env_var TEXT,
         prompt TEXT,
         exit_code INTEGER, log_path TEXT,
         started_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -89,6 +92,18 @@ export function getDb(): Database.Database {
     _db.exec(
       `ALTER TABLE sessions ADD COLUMN agent_team_id TEXT NOT NULL DEFAULT '${DEFAULT_AGENT_TEAM_ID}'`,
     );
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.exec(
+      `ALTER TABLE sessions ADD COLUMN session_auth_mode TEXT NOT NULL DEFAULT '${DEFAULT_SESSION_AUTH_MODE}'`,
+    );
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.exec("ALTER TABLE sessions ADD COLUMN agent_api_key_env_var TEXT");
   } catch {
     // Column already exists
   }

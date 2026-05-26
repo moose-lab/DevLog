@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   SESSION_UNRESPONSIVE_MS,
+  parseClaudeBinaryPath,
   shouldRestartUnresponsiveSession,
 } from "../process-manager";
 
@@ -43,5 +44,21 @@ test("shouldRestartUnresponsiveSession only restarts live stale processes", () =
       paused: true,
     }),
     false,
+  );
+});
+
+test("parseClaudeBinaryPath ignores shell alias descriptions", () => {
+  assert.equal(
+    parseClaudeBinaryPath(
+      "alias claude='command claude --dangerously-skip-permissions'\n/Users/moose/.local/bin/claude",
+    ),
+    "/Users/moose/.local/bin/claude",
+  );
+
+  assert.equal(
+    parseClaudeBinaryPath(
+      "claude: aliased to command claude --dangerously-skip-permissions",
+    ),
+    null,
   );
 });
