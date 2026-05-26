@@ -6,6 +6,7 @@ import {
   isInteractiveSessionStatus,
   SessionChat,
 } from "@/components/sessions/session-chat";
+import { AgentExecutionBadges } from "@/components/sessions/agent-selector";
 import { SessionVcc } from "@/components/sessions/session-vcc";
 import { ProcessIndicator } from "@/components/sessions/process-indicator";
 import { Button } from "@/components/ui/button";
@@ -102,6 +103,10 @@ export default function SessionDetailPage() {
                 {session.branch_name}
               </Badge>
             )}
+            <AgentExecutionBadges
+              codingAgentId={session.coding_agent_id}
+              agentTeamId={session.agent_team_id}
+            />
           </div>
         </div>
 

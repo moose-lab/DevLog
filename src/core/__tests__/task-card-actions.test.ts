@@ -37,6 +37,8 @@ function session(overrides: Partial<Session>): Session {
     status: "running",
     claude_command: null,
     claude_session_id: null,
+    coding_agent_id: "general-coding-agent",
+    agent_team_id: "implementation-review-team",
     prompt: null,
     exit_code: null,
     log_path: null,

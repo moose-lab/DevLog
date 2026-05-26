@@ -40,6 +40,8 @@ export interface Session {
   status: SessionStatus;
   claude_command: string | null;
   claude_session_id: string | null;
+  coding_agent_id: string;
+  agent_team_id: string;
   prompt: string | null;
   exit_code: number | null;
   log_path: string | null;

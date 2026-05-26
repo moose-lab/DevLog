@@ -3,6 +3,11 @@ import { randomBytes } from "crypto";
 import { getDb } from "@/core/db";
 import { resolveProjectId } from "@/lib/api-utils";
 import { processManager } from "@/core/process-manager";
+import {
+  buildAgentExecutionInstructions,
+  getAgentExecutionInputFromPayload,
+  resolveAgentExecutionConfig,
+} from "@/core/agent-presets";
 import type { Session } from "@/core/types-dashboard";
 
 export async function GET(req: NextRequest) {
@@ -19,7 +24,13 @@ export async function POST(req: NextRequest) {
   const projectId = resolveProjectId(req);
   const body = await req.json();
 
-  const { task_id, worktree_name, worktree_path, branch_name, prompt } = body;
+  const {
+    task_id,
+    worktree_name,
+    worktree_path,
+    branch_name,
+    prompt,
+  } = body;
   if (!prompt) {
     return NextResponse.json({ error: "prompt is required" }, { status: 400 });
   }
@@ -28,11 +39,23 @@ export async function POST(req: NextRequest) {
   }
 
   const id = randomBytes(8).toString("hex");
+  const agentConfig = resolveAgentExecutionConfig(
+    getAgentExecutionInputFromPayload(body),
+  );
+  const sessionPrompt = [
+    String(prompt).trim(),
+    "",
+    "## Agent Execution",
+    buildAgentExecutionInstructions(agentConfig),
+  ].join("\n");
 
   const session = db
     .prepare(
-      `INSERT INTO sessions (id, project_id, task_id, worktree_name, worktree_path, branch_name, status, prompt)
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?)
+      `INSERT INTO sessions (
+        id, project_id, task_id, worktree_name, worktree_path, branch_name,
+        status, coding_agent_id, agent_team_id, prompt
+      )
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)
        RETURNING *`
     )
     .get(
@@ -42,7 +65,9 @@ export async function POST(req: NextRequest) {
       worktree_name ?? null,
       worktree_path,
       branch_name ?? null,
-      prompt
+      agentConfig.codingAgent.id,
+      agentConfig.agentTeam.id,
+      sessionPrompt
     ) as Session;
 
   // Link session to task if provided
@@ -56,7 +81,7 @@ export async function POST(req: NextRequest) {
   // Send the initial prompt as the first turn
   try {
     // Don't await — let it process in the background
-    processManager.sendMessage(id, prompt);
+    processManager.sendMessage(id, sessionPrompt);
   } catch (err) {
     db.prepare(
       "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?"

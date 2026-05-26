@@ -20,6 +20,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Loader2 } from "lucide-react";
+import {
+  DEFAULT_AGENT_TEAM_ID,
+  DEFAULT_CODING_AGENT_ID,
+} from "@/core/agent-presets";
+import { AgentSelector } from "./agent-selector";
 import type { Worktree } from "@/core/types-dashboard";
 
 const EXAMPLE_PROMPTS = [
@@ -36,6 +41,8 @@ interface LaunchDialogProps {
     worktree_path: string;
     branch_name?: string;
     prompt: string;
+    coding_agent_id: string;
+    agent_team_id: string;
   }) => Promise<{ id: string } | null>;
 }
 
@@ -44,6 +51,8 @@ export function LaunchDialog({ onSubmit }: LaunchDialogProps) {
   const [open, setOpen] = useState(false);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [selectedWorktree, setSelectedWorktree] = useState("");
+  const [codingAgentId, setCodingAgentId] = useState(DEFAULT_CODING_AGENT_ID);
+  const [agentTeamId, setAgentTeamId] = useState(DEFAULT_AGENT_TEAM_ID);
   const [prompt, setPrompt] = useState("");
   const [launching, setLaunching] = useState(false);
 
@@ -80,6 +89,8 @@ export function LaunchDialog({ onSubmit }: LaunchDialogProps) {
         worktree_path: worktreePath,
         branch_name: wt?.branch,
         prompt: prompt.trim(),
+        coding_agent_id: codingAgentId,
+        agent_team_id: agentTeamId,
       });
 
       setPrompt("");
@@ -149,6 +160,13 @@ export function LaunchDialog({ onSubmit }: LaunchDialogProps) {
               </Select>
             </div>
           )}
+
+          <AgentSelector
+            codingAgentId={codingAgentId}
+            agentTeamId={agentTeamId}
+            onCodingAgentChange={setCodingAgentId}
+            onAgentTeamChange={setAgentTeamId}
+          />
 
           <Button
             onClick={handleSubmit}

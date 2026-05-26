@@ -1,3 +1,8 @@
+import {
+  DEFAULT_AGENT_TEAM_ID,
+  DEFAULT_CODING_AGENT_ID,
+} from "./agent-presets";
+
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY DEFAULT (hex(randomblob(8))),
@@ -29,6 +34,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'idle', 'paused', 'completed', 'failed', 'killed')),
   claude_command TEXT,
   claude_session_id TEXT,
+  coding_agent_id TEXT NOT NULL DEFAULT '${DEFAULT_CODING_AGENT_ID}',
+  agent_team_id TEXT NOT NULL DEFAULT '${DEFAULT_AGENT_TEAM_ID}',
   prompt TEXT,
   exit_code INTEGER,
   log_path TEXT,

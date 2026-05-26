@@ -78,9 +78,11 @@ export function KanbanBoard() {
     task: Task,
     worktreePath: string,
     worktreeName?: string,
-    branchName?: string
+    branchName?: string,
+    agentConfig?: { coding_agent_id: string; agent_team_id: string },
+    promptOverride?: string,
   ): Promise<{ id: string } | null> => {
-    const prompt = task.prompt;
+    const prompt = promptOverride?.trim() || task.prompt;
     if (!prompt) return null;
 
     const res = await fetch("/api/sessions", {
@@ -92,6 +94,7 @@ export function KanbanBoard() {
         worktree_path: worktreePath,
         branch_name: branchName,
         prompt,
+        ...agentConfig,
       }),
     });
 

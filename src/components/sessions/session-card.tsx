@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ProcessIndicator } from "./process-indicator";
+import { AgentExecutionBadges } from "./agent-selector";
 import {
   Square,
   Trash2,
@@ -71,6 +72,13 @@ export function SessionCard({
             )}
           </div>
         )}
+
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <AgentExecutionBadges
+            codingAgentId={session.coding_agent_id}
+            agentTeamId={session.agent_team_id}
+          />
+        </div>
 
         {/* Actions */}
         <div className="flex items-center justify-between pt-1">

@@ -30,6 +30,8 @@ export function useSessions() {
     worktree_path: string;
     branch_name?: string;
     prompt: string;
+    coding_agent_id?: string;
+    agent_team_id?: string;
   }): Promise<Session | null> => {
     const res = await fetch("/api/sessions", {
       method: "POST",
