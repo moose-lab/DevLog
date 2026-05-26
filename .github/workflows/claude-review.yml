@@ -45,6 +45,11 @@ jobs:
           # action's env validation checks the input, not the env var. The
           # README's env-only example is incomplete for v1.
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Post Claude's summary as a single sticky PR comment. Without
+          # this, the action only surfaces inline-comment tool calls, and a
+          # top-level summary prompt produces "No buffered inline comments"
+          # and posts nothing.
+          use_sticky_comment: true
           prompt: |
             You are reviewing a pull request in moose-lab/DevLog, a TypeScript /
             Next.js 16 / Bun developer-tools project (CLI + dashboard for Claude
