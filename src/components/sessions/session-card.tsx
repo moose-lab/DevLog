@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ProcessIndicator } from "./process-indicator";
+import { AgentExecutionBadges } from "./agent-selector";
 import {
   Square,
   Trash2,
@@ -12,6 +13,7 @@ import {
   MessageSquare,
   Clock,
 } from "lucide-react";
+import { isActiveSessionStatus } from "@/core/task-readiness";
 import type { Session } from "@/core/types-dashboard";
 
 interface SessionCardProps {
@@ -37,7 +39,7 @@ export function SessionCard({
   onControl,
   onDelete,
 }: SessionCardProps) {
-  const isActive = session.status === "running" || session.status === "idle" || session.status === "paused";
+  const isActive = isActiveSessionStatus(session.status);
 
   return (
     <Card className="group hover:border-primary/30 transition-colors">
@@ -71,6 +73,15 @@ export function SessionCard({
           </div>
         )}
 
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <AgentExecutionBadges
+            codingAgentId={session.coding_agent_id}
+            agentTeamId={session.agent_team_id}
+            sessionAuthMode={session.session_auth_mode}
+            agentApiKeyEnvVar={session.agent_api_key_env_var}
+          />
+        </div>
+
         {/* Actions */}
         <div className="flex items-center justify-between pt-1">
           <Link
@@ -78,7 +89,7 @@ export function SessionCard({
             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <MessageSquare className="h-3 w-3" />
-            <span>Open session</span>
+            <span>Open task run</span>
           </Link>
           <div className="flex items-center gap-0.5">
             {isActive && (

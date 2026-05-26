@@ -31,6 +31,33 @@ test("tasks new columns exist with sensible defaults", () => {
   assert.equal(row.fail_reason, null);
 });
 
+test("sessions store agent execution and runtime auth defaults", () => {
+  const db = makeTestDb();
+  const sessionId = "session-agent-defaults";
+
+  db.prepare("INSERT INTO sessions (id, project_id, status) VALUES (?, ?, ?)").run(
+    sessionId,
+    "test",
+    "running",
+  );
+
+  const row = db
+    .prepare(
+      "SELECT coding_agent_id, agent_team_id, session_auth_mode, agent_api_key_env_var FROM sessions WHERE id = ?",
+    )
+    .get(sessionId) as {
+    coding_agent_id: string;
+    agent_team_id: string;
+    session_auth_mode: string;
+    agent_api_key_env_var: string | null;
+  };
+
+  assert.equal(row.coding_agent_id, "general-coding-agent");
+  assert.equal(row.agent_team_id, "implementation-review-team");
+  assert.equal(row.session_auth_mode, "backend-oauth");
+  assert.equal(row.agent_api_key_env_var, null);
+});
+
 test("migrateTasksV2 preserves data and adds new columns on legacy DB", () => {
   const db = new Database(":memory:");
   // Simulate the OLD schema (pre-1.1)

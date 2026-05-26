@@ -9,23 +9,46 @@ import {
   type ToolCall,
 } from "./stream-manager";
 import { onSessionExit } from "./task-lifecycle";
+import {
+  buildClaudeProcessEnv,
+  resolveSessionRuntimeAuthConfig,
+} from "./session-runtime-auth";
+
+export function parseClaudeBinaryPath(output: string): string | null {
+  for (const rawLine of output.split("\n")) {
+    const line = rawLine.trim();
+    if (!line.startsWith("/")) continue;
+    if (fs.existsSync(line)) return line;
+  }
+  return null;
+}
+
+function resolveClaudeBinaryPath(): string {
+  const candidates: string[] = [];
+  try {
+    const shell = process.env.SHELL ?? "/bin/zsh";
+    const resolved = execFileSync(shell, ["-ilc", "whence -p claude"], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    const parsed = parseClaudeBinaryPath(resolved);
+    if (parsed) candidates.push(parsed);
+  } catch {
+    // keep fallback candidates
+  }
+
+  candidates.push(
+    "/Users/moose/.local/bin/claude",
+    "/opt/homebrew/bin/claude",
+    "/usr/local/bin/claude",
+  );
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? "claude";
+}
 
 // Resolve claude binary path once at module load
 let claudeBin = "claude";
-try {
-  const shell = process.env.SHELL ?? "/bin/zsh";
-  claudeBin = execFileSync(shell, ["-ilc", "which claude"], {
-    encoding: "utf-8",
-    timeout: 5000,
-  }).trim();
-} catch {
-  for (const p of ["/opt/homebrew/bin/claude", "/usr/local/bin/claude"]) {
-    if (fs.existsSync(p)) {
-      claudeBin = p;
-      break;
-    }
-  }
-}
+claudeBin = resolveClaudeBinaryPath();
 
 // Resolve full user PATH once
 let userPath = process.env.PATH ?? "";
@@ -199,6 +222,8 @@ class ProcessManager {
     const session = db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as {
       worktree_path: string;
       claude_session_id: string | null;
+      session_auth_mode: string | null;
+      agent_api_key_env_var: string | null;
     } | undefined;
 
     if (!session) return null;
@@ -221,7 +246,27 @@ class ProcessManager {
 
     // Clean env: remove CLAUDECODE so child doesn't think it's nested
     const { CLAUDECODE: _, ...cleanEnv } = process.env;
-    const env = { ...cleanEnv, PATH: userPath };
+    const runtimeAuthConfig = resolveSessionRuntimeAuthConfig({
+      session_auth_mode: session.session_auth_mode,
+      agent_api_key_env_var: session.agent_api_key_env_var,
+    });
+    const processEnv = buildClaudeProcessEnv(
+      { ...cleanEnv, PATH: userPath },
+      runtimeAuthConfig,
+    );
+    if (!processEnv.ok) {
+      db.prepare(
+        "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?",
+      ).run(sessionId);
+      streamManager.emit(sessionId, {
+        type: "error",
+        message: processEnv.error,
+      });
+      streamManager.emit(sessionId, { type: "status", status: "failed" });
+      this.emitGlobalSystemLog("warning", sessionId, processEnv.error);
+      return null;
+    }
+    const env = processEnv.env;
 
     const proc = spawn(claudeBin, args, {
       cwd: session.worktree_path,
@@ -247,6 +292,21 @@ class ProcessManager {
       sessionId,
       `Session ${sessionId.slice(0, 8)} process started`
     );
+
+    proc.on("error", (err) => {
+      this.sessions.delete(sessionId);
+      const message = `Failed to start Claude process: ${err.message}`;
+      try {
+        db.prepare(
+          "UPDATE sessions SET status = 'failed', pid = NULL, ended_at = datetime('now') WHERE id = ?",
+        ).run(sessionId);
+      } catch {
+        // ignore
+      }
+      streamManager.emit(sessionId, { type: "error", message });
+      streamManager.emit(sessionId, { type: "status", status: "failed" });
+      this.emitGlobalSystemLog("warning", sessionId, message);
+    });
 
     // Update session status
     db.prepare(
@@ -318,15 +378,19 @@ class ProcessManager {
 
       // Update status to idle (can spawn new process for next message)
       const newStatus = code === 0 ? "idle" : "idle";
+      let statusUpdated = false;
       try {
-        db.prepare(
-          "UPDATE sessions SET status = ?, pid = NULL WHERE id = ? AND status NOT IN ('completed', 'killed')"
+        const result = db.prepare(
+          "UPDATE sessions SET status = ?, pid = NULL WHERE id = ? AND status NOT IN ('completed', 'failed', 'killed')"
         ).run(newStatus, sessionId);
+        statusUpdated = result.changes > 0;
       } catch {
         // ignore
       }
 
-      streamManager.emit(sessionId, { type: "status", status: "idle" });
+      if (statusUpdated) {
+        streamManager.emit(sessionId, { type: "status", status: "idle" });
+      }
 
       // Auto-transition linked task based on session outcome
       onSessionExit(sessionId).catch(() => {
@@ -623,6 +687,7 @@ class ProcessManager {
 
     // Result (turn complete)
     if (type === "result") {
+      const isError = event.is_error === true;
       const claudeSessionId = event.session_id as string | undefined;
       if (claudeSessionId) {
         sp.claudeSessionId = claudeSessionId;
@@ -661,20 +726,43 @@ class ProcessManager {
       sp.textBuffer = "";
       sp.toolCalls = [];
 
-      // Update status to idle
+      // Update status to idle or failed
       const db = getDb();
       try {
-        db.prepare(
-          "UPDATE sessions SET status = 'idle' WHERE id = ? AND status = 'running'"
-        ).run(sessionId);
+        if (isError) {
+          db.prepare(
+            "UPDATE sessions SET status = 'failed', pid = NULL, ended_at = datetime('now') WHERE id = ? AND status = 'running'"
+          ).run(sessionId);
+        } else {
+          db.prepare(
+            "UPDATE sessions SET status = 'idle' WHERE id = ? AND status = 'running'"
+          ).run(sessionId);
+        }
       } catch {
         // ignore
       }
 
-      streamManager.emit(sessionId, { type: "status", status: "idle" });
+      streamManager.emit(sessionId, {
+        type: "status",
+        status: isError ? "failed" : "idle",
+      });
 
       // Process next queued message after a brief delay
-      setTimeout(() => this.processQueue(sessionId), 200);
+      if (!isError) {
+        setTimeout(() => this.processQueue(sessionId), 200);
+      } else {
+        this.messageQueues.delete(sessionId);
+        try {
+          sp.proc.stdin?.end();
+        } catch {
+          // ignore
+        }
+        try {
+          sp.proc.kill("SIGTERM");
+        } catch {
+          // ignore
+        }
+      }
       return;
     }
   }

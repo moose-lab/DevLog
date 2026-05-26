@@ -40,6 +40,10 @@ export interface Session {
   status: SessionStatus;
   claude_command: string | null;
   claude_session_id: string | null;
+  coding_agent_id: string;
+  agent_team_id: string;
+  session_auth_mode: "backend-oauth" | "agent-api-key";
+  agent_api_key_env_var: string | null;
   prompt: string | null;
   exit_code: number | null;
   log_path: string | null;

@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { SessionChat } from "@/components/sessions/session-chat";
+import {
+  isInteractiveSessionStatus,
+  SessionChat,
+} from "@/components/sessions/session-chat";
+import { AgentExecutionBadges } from "@/components/sessions/agent-selector";
 import { SessionVcc } from "@/components/sessions/session-vcc";
 import { ProcessIndicator } from "@/components/sessions/process-indicator";
 import { Button } from "@/components/ui/button";
@@ -61,7 +65,7 @@ export default function SessionDetailPage() {
     );
   }
 
-  const isActive = session.status === "running" || session.status === "idle";
+  const isActive = isInteractiveSessionStatus(session.status);
   const isEnded =
     session.status === "completed" ||
     session.status === "failed" ||
@@ -85,6 +89,9 @@ export default function SessionDetailPage() {
           </h2>
           <div className="flex items-center gap-2 mt-0.5">
             <ProcessIndicator status={session.status} />
+            <span className="text-[10px] text-muted-foreground">
+              AI task run
+            </span>
             {session.worktree_name && (
               <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
                 <GitBranch className="h-3 w-3" />
@@ -96,6 +103,12 @@ export default function SessionDetailPage() {
                 {session.branch_name}
               </Badge>
             )}
+            <AgentExecutionBadges
+              codingAgentId={session.coding_agent_id}
+              agentTeamId={session.agent_team_id}
+              sessionAuthMode={session.session_auth_mode}
+              agentApiKeyEnvVar={session.agent_api_key_env_var}
+            />
           </div>
         </div>
 
@@ -108,7 +121,7 @@ export default function SessionDetailPage() {
             onClick={() => setTab("chat")}
           >
             <MessageSquare className="h-3.5 w-3.5" />
-            Chat
+            Instruct
           </Button>
           <Button
             variant={tab === "observe" ? "secondary" : "ghost"}
@@ -117,7 +130,7 @@ export default function SessionDetailPage() {
             onClick={() => setTab("observe")}
           >
             <Eye className="h-3.5 w-3.5" />
-            Observe
+            Process
           </Button>
         </div>
 

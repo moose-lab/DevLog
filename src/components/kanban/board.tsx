@@ -9,6 +9,7 @@ import { TaskDetailDialog } from "./task-detail-dialog";
 import { useTasks } from "@/hooks/use-tasks";
 import { useTaskSessions } from "@/hooks/use-task-sessions";
 import type { Task, TaskStatus } from "@/core/types-dashboard";
+import type { SessionRuntimeAuthMode } from "@/core/session-runtime-auth";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const COLUMNS: TaskStatus[] = ["todo", "in_progress", "review", "blocked", "done"];
@@ -78,9 +79,16 @@ export function KanbanBoard() {
     task: Task,
     worktreePath: string,
     worktreeName?: string,
-    branchName?: string
+    branchName?: string,
+    agentConfig?: {
+      coding_agent_id: string;
+      agent_team_id: string;
+      session_auth_mode: SessionRuntimeAuthMode;
+      agent_api_key_env_var?: string;
+    },
+    promptOverride?: string,
   ): Promise<{ id: string } | null> => {
-    const prompt = task.prompt;
+    const prompt = promptOverride?.trim() || task.prompt;
     if (!prompt) return null;
 
     const res = await fetch("/api/sessions", {
@@ -92,6 +100,7 @@ export function KanbanBoard() {
         worktree_path: worktreePath,
         branch_name: branchName,
         prompt,
+        ...agentConfig,
       }),
     });
 

@@ -8,6 +8,14 @@ import { processManager } from "@/core/process-manager";
 import { fileWatcher } from "@/core/file-watcher";
 import { hasTaskPrompt } from "@/core/task-readiness";
 import { slugify, buildPromptTemplate } from "@/core/task-lifecycle";
+import {
+  getAgentExecutionInputFromPayload,
+  resolveAgentExecutionConfig,
+} from "@/core/agent-presets";
+import {
+  getSessionRuntimeAuthInputFromPayload,
+  resolveSessionRuntimeAuthConfig,
+} from "@/core/session-runtime-auth";
 import type { Task, Session } from "@/core/types-dashboard";
 
 export async function POST(
@@ -17,6 +25,18 @@ export async function POST(
   const { id: taskId } = await params;
   const db = getDb();
   const projectId = resolveProjectId(req);
+  let payload: unknown;
+  try {
+    payload = await req.json();
+  } catch {
+    // No body means use the default agent execution config.
+  }
+  const agentConfig = resolveAgentExecutionConfig(
+    getAgentExecutionInputFromPayload(payload),
+  );
+  const runtimeAuthConfig = resolveSessionRuntimeAuthConfig(
+    getSessionRuntimeAuthInputFromPayload(payload),
+  );
 
   // 1. Fetch and validate task
   const task = db
@@ -75,12 +95,23 @@ export async function POST(
 
   // 3. Create session
   const sessionId = randomBytes(8).toString("hex");
-  const prompt = buildPromptTemplate(task, project, worktree.path, branchName);
+  const prompt = buildPromptTemplate(
+    task,
+    project,
+    worktree.path,
+    branchName,
+    agentConfig,
+    runtimeAuthConfig,
+  );
 
   const session = db
     .prepare(
-      `INSERT INTO sessions (id, project_id, task_id, worktree_name, worktree_path, branch_name, status, prompt)
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?)
+      `INSERT INTO sessions (
+        id, project_id, task_id, worktree_name, worktree_path, branch_name,
+        status, coding_agent_id, agent_team_id, session_auth_mode,
+        agent_api_key_env_var, prompt
+      )
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
        RETURNING *`
     )
     .get(
@@ -90,6 +121,10 @@ export async function POST(
       worktreeName,
       worktree.path,
       branchName,
+      agentConfig.codingAgent.id,
+      agentConfig.agentTeam.id,
+      runtimeAuthConfig.mode,
+      runtimeAuthConfig.agentApiKeyEnvVar,
       prompt
     ) as Session;
 

@@ -2,6 +2,11 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import { SCHEMA } from "./db-schema";
+import {
+  DEFAULT_AGENT_TEAM_ID,
+  DEFAULT_CODING_AGENT_ID,
+} from "./agent-presets";
+import { DEFAULT_SESSION_AUTH_MODE } from "./session-runtime-auth";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "devlog.db");
@@ -41,12 +46,25 @@ export function getDb(): Database.Database {
         worktree_name TEXT, worktree_path TEXT, branch_name TEXT,
         pid INTEGER,
         status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','idle','paused','completed','failed','killed')),
-        claude_command TEXT, claude_session_id TEXT, prompt TEXT,
+        claude_command TEXT, claude_session_id TEXT,
+        coding_agent_id TEXT NOT NULL DEFAULT '${DEFAULT_CODING_AGENT_ID}',
+        agent_team_id TEXT NOT NULL DEFAULT '${DEFAULT_AGENT_TEAM_ID}',
+        session_auth_mode TEXT NOT NULL DEFAULT '${DEFAULT_SESSION_AUTH_MODE}',
+        agent_api_key_env_var TEXT,
+        prompt TEXT,
         exit_code INTEGER, log_path TEXT,
         started_at TEXT NOT NULL DEFAULT (datetime('now')),
         ended_at TEXT
       );
-      INSERT OR IGNORE INTO sessions_new SELECT id, task_id, worktree_name, worktree_path, branch_name, pid, status, claude_command, claude_session_id, prompt, exit_code, log_path, started_at, ended_at FROM sessions;
+      INSERT OR IGNORE INTO sessions_new (
+        id, task_id, worktree_name, worktree_path, branch_name, pid, status,
+        claude_command, claude_session_id, prompt, exit_code, log_path,
+        started_at, ended_at
+      )
+      SELECT id, task_id, worktree_name, worktree_path, branch_name, pid, status,
+        claude_command, claude_session_id, prompt, exit_code, log_path,
+        started_at, ended_at
+      FROM sessions;
       DROP TABLE sessions;
       ALTER TABLE sessions_new RENAME TO sessions;
       CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
@@ -61,6 +79,33 @@ export function getDb(): Database.Database {
     } catch {
       // Column already exists
     }
+  }
+
+  try {
+    _db.exec(
+      `ALTER TABLE sessions ADD COLUMN coding_agent_id TEXT NOT NULL DEFAULT '${DEFAULT_CODING_AGENT_ID}'`,
+    );
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.exec(
+      `ALTER TABLE sessions ADD COLUMN agent_team_id TEXT NOT NULL DEFAULT '${DEFAULT_AGENT_TEAM_ID}'`,
+    );
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.exec(
+      `ALTER TABLE sessions ADD COLUMN session_auth_mode TEXT NOT NULL DEFAULT '${DEFAULT_SESSION_AUTH_MODE}'`,
+    );
+  } catch {
+    // Column already exists
+  }
+  try {
+    _db.exec("ALTER TABLE sessions ADD COLUMN agent_api_key_env_var TEXT");
+  } catch {
+    // Column already exists
   }
 
   // Migrate: update tasks CHECK constraint to include 'review' and 'blocked'

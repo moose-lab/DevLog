@@ -2,6 +2,14 @@ import type { Task } from "./types-dashboard";
 import type { ProjectConfig } from "./types-project";
 import { getDb } from "./db";
 import { getWorktreeFilesChanged } from "./worktree-manager";
+import {
+  buildAgentExecutionInstructions,
+  type AgentExecutionConfig,
+} from "./agent-presets";
+import {
+  buildSessionRuntimeAuthInstructions,
+  type SessionRuntimeAuthConfig,
+} from "./session-runtime-auth";
 
 export function slugify(text: string): string {
   return text
@@ -15,7 +23,9 @@ export function buildPromptTemplate(
   task: Task,
   project: ProjectConfig,
   worktreePath: string,
-  branchName: string
+  branchName: string,
+  agentConfig?: AgentExecutionConfig,
+  runtimeAuthConfig?: SessionRuntimeAuthConfig,
 ): string {
   const parts = [
     `# Task: ${task.title}`,
@@ -26,6 +36,16 @@ export function buildPromptTemplate(
   }
   if (task.prompt) {
     parts.push("## Instructions", task.prompt, "");
+  }
+  if (agentConfig) {
+    parts.push(
+      "## Agent Execution",
+      buildAgentExecutionInstructions(agentConfig),
+      ...(runtimeAuthConfig
+        ? [buildSessionRuntimeAuthInstructions(runtimeAuthConfig)]
+        : []),
+      "",
+    );
   }
   parts.push(
     "## Context",

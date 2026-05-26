@@ -4,18 +4,15 @@ import { useSessions } from "@/hooks/use-sessions";
 import { SessionCard } from "@/components/sessions/session-card";
 import { LaunchDialog } from "@/components/sessions/launch-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { isActiveSessionStatus } from "@/core/task-readiness";
 import { Terminal } from "lucide-react";
 
 export default function SessionsPage() {
   const { sessions, loading, launchSession, controlSession, deleteSession } =
     useSessions();
 
-  const activeSessions = sessions.filter(
-    (s) => s.status === "running" || s.status === "idle" || s.status === "paused"
-  );
-  const pastSessions = sessions.filter(
-    (s) => s.status !== "running" && s.status !== "idle" && s.status !== "paused"
-  );
+  const activeSessions = sessions.filter((s) => isActiveSessionStatus(s.status));
+  const pastSessions = sessions.filter((s) => !isActiveSessionStatus(s.status));
 
   if (loading) {
     return (
@@ -36,7 +33,9 @@ export default function SessionsPage() {
         <div>
           <h1 className="text-lg font-semibold">Sessions</h1>
           <p className="text-sm text-muted-foreground">
-            {activeSessions.length} active, {pastSessions.length} completed
+            {activeSessions.length} active task run
+            {activeSessions.length !== 1 ? "s" : ""}, {pastSessions.length} in
+            history
           </p>
         </div>
         <LaunchDialog onSubmit={async (data) => {
@@ -52,8 +51,8 @@ export default function SessionsPage() {
           </div>
           <p className="text-base font-medium">No sessions yet</p>
           <p className="text-sm text-muted-foreground mt-1.5 max-w-sm">
-            Each session runs an isolated Claude Code process.
-            Describe what you want to build and Claude will handle the rest.
+            Each session is an AI agent run for a specific task. Start one to
+            watch progress and keep giving instructions until the work is done.
           </p>
           <div className="mt-5">
             <LaunchDialog onSubmit={async (data) => {

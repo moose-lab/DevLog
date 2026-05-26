@@ -29,6 +29,16 @@ import {
   GitBranch,
   Terminal,
 } from "lucide-react";
+import {
+  DEFAULT_AGENT_TEAM_ID,
+  DEFAULT_CODING_AGENT_ID,
+} from "@/core/agent-presets";
+import {
+  DEFAULT_AGENT_API_KEY_ENV_VAR,
+  DEFAULT_SESSION_AUTH_MODE,
+  type SessionRuntimeAuthMode,
+} from "@/core/session-runtime-auth";
+import { AgentSelector } from "@/components/sessions/agent-selector";
 import type { Task, TaskPriority, TaskStatus, Worktree } from "@/core/types-dashboard";
 import { cn } from "@/core/dashboard-utils";
 import { TaskReviewPanel } from "./task-review-panel";
@@ -55,7 +65,19 @@ interface TaskDetailDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onUpdate: (id: string, data: Partial<Task>) => Promise<void>;
-  onLaunchSession: (task: Task, worktreePath: string, worktreeName?: string, branchName?: string) => Promise<{ id: string } | null>;
+  onLaunchSession: (
+    task: Task,
+    worktreePath: string,
+    worktreeName?: string,
+    branchName?: string,
+    agentConfig?: {
+      coding_agent_id: string;
+      agent_team_id: string;
+      session_auth_mode: SessionRuntimeAuthMode;
+      agent_api_key_env_var?: string;
+    },
+    promptOverride?: string,
+  ) => Promise<{ id: string } | null>;
 }
 
 export function TaskDetailDialog({
@@ -75,6 +97,13 @@ export function TaskDetailDialog({
   const [launching, setLaunching] = useState(false);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [selectedWorktree, setSelectedWorktree] = useState("");
+  const [codingAgentId, setCodingAgentId] = useState(DEFAULT_CODING_AGENT_ID);
+  const [agentTeamId, setAgentTeamId] = useState(DEFAULT_AGENT_TEAM_ID);
+  const [sessionAuthMode, setSessionAuthMode] =
+    useState<SessionRuntimeAuthMode>(DEFAULT_SESSION_AUTH_MODE);
+  const [agentApiKeyEnvVar, setAgentApiKeyEnvVar] = useState(
+    DEFAULT_AGENT_API_KEY_ENV_VAR,
+  );
 
   // Reset form when task changes
   useEffect(() => {
@@ -133,7 +162,14 @@ export function TaskDetailDialog({
         task,
         worktreePath,
         wt?.name,
-        wt?.branch
+        wt?.branch,
+        {
+          coding_agent_id: codingAgentId,
+          agent_team_id: agentTeamId,
+          session_auth_mode: sessionAuthMode,
+          agent_api_key_env_var: agentApiKeyEnvVar,
+        },
+        taskPrompt,
       );
       if (session?.id) {
         onOpenChange(false);
@@ -345,6 +381,16 @@ export function TaskDetailDialog({
                   </SelectContent>
                 </Select>
               )}
+              <AgentSelector
+                codingAgentId={codingAgentId}
+                agentTeamId={agentTeamId}
+                sessionAuthMode={sessionAuthMode}
+                agentApiKeyEnvVar={agentApiKeyEnvVar}
+                onCodingAgentChange={setCodingAgentId}
+                onAgentTeamChange={setAgentTeamId}
+                onSessionAuthModeChange={setSessionAuthMode}
+                onAgentApiKeyEnvVarChange={setAgentApiKeyEnvVar}
+              />
               <Button
                 onClick={handleLaunch}
                 disabled={launching || !(prompt.trim() || task.prompt)}
