@@ -1,0 +1,65 @@
+name: Claude Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    name: Claude Review
+    # pull_request events always run; issue_comment events only when the
+    # comment body contains "@claude" so random comments don't cost tokens.
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so Claude can see diff context across rebases.
+          fetch-depth: 0
+
+      - name: Claude review
+        uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          prompt: |
+            You are reviewing a pull request in moose-lab/DevLog, a TypeScript /
+            Next.js 16 / Bun developer-tools project (CLI + dashboard for Claude
+            Code sessions).
+
+            Review priorities, in order:
+            1. Correctness — logic bugs, edge cases, error handling, async
+               race conditions, off-by-one in date/window calculations.
+            2. Cross-platform safety — no hardcoded /Users/ paths, no timezone
+               assumptions (the repo has a known TZ-coupling in cost-tracker;
+               flag any new code that adds similar coupling).
+            3. Security — input validation on anything read from .jsonl files
+               or shell output, no secret values in code or logs, no SQL/shell
+               injection in dynamically built commands.
+            4. TypeScript type safety — flag any `as any`, unnecessary `!`,
+               or types that paper over real uncertainty.
+            5. Test coverage — meaningful tests for new logic; flag missing.
+
+            Skip nitpicky style comments (the project has no linter yet).
+            Be concise. Output format:
+
+            **Findings**
+            - [must-fix] <description with file:line>
+            - [should-fix] <description with file:line>
+            - [nit] <description with file:line>
+
+            **Verdict:** APPROVE | REQUEST_CHANGES | COMMENT
