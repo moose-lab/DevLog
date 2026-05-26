@@ -1,5 +1,8 @@
 # DevLog
 
+[![CI](https://github.com/moose-lab/DevLog/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/moose-lab/DevLog/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/moose-lab/DevLog/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/moose-lab/DevLog/actions/workflows/codeql.yml)
+
 **CLI + Dashboard for your Claude Code sessions.**
 
 DevLog reads your Claude Code conversation history and turns it into structured, searchable work journals — with a web dashboard for visual exploration.
