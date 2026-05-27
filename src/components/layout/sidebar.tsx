@@ -10,6 +10,7 @@ import {
   Lock,
   BarChart3,
   FolderOpen,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/core/dashboard-utils";
 import { useProjects } from "@/hooks/use-projects";
@@ -42,7 +43,10 @@ const NAV_SECTIONS = [
   },
   {
     label: "ANALYTICS",
-    items: [{ href: "/devlog", label: "Cost & Usage", icon: BarChart3 }],
+    items: [
+      { href: "/reports", label: "Reports", icon: FileText },
+      { href: "/devlog", label: "Cost & Usage", icon: BarChart3 },
+    ],
   },
 ] as const;
 

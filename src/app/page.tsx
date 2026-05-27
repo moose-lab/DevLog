@@ -18,7 +18,9 @@ import { useTaskAnalytics } from "@/hooks/use-task-analytics";
 import { useSessions } from "@/hooks/use-sessions";
 import { useDevlog } from "@/hooks/use-devlog";
 import { useProjects } from "@/hooks/use-projects";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Download } from "lucide-react";
 
 /* ── Live session timer ──────────────────────────────── */
 function useSessionTimer(
@@ -92,6 +94,10 @@ export default function DashboardPage() {
   const monoFont =
     "var(--font-jetbrains), var(--font-geist-mono), monospace";
 
+  const handleExportToday = () => {
+    window.location.href = `/api/reports/export?date=${dashboardTodayKey()}&period=daily`;
+  };
+
   return (
     <div className="flex flex-col gap-4 h-full">
       {/* Conflict alert */}
@@ -124,7 +130,11 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="flex items-start gap-8">
+        <div className="flex items-start gap-4">
+          <Button variant="outline" size="sm" onClick={handleExportToday}>
+            <Download className="h-4 w-4" />
+            Export Report
+          </Button>
           <div className="text-right">
             <span className="text-[10px] text-zinc-600 uppercase tracking-[0.12em] block font-medium">
               Session Duration
@@ -227,4 +237,12 @@ export default function DashboardPage() {
       </div>
     </div>
   );
+}
+
+function dashboardTodayKey(): string {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
