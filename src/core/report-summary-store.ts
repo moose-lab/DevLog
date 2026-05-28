@@ -1,3 +1,8 @@
+import {
+  mkdirSync as fsMkdirSync,
+  writeFileSync as fsWriteFileSync,
+} from "node:fs";
+import { join } from "node:path";
 import { getDb } from "./db";
 import {
   buildReportSummary,
@@ -7,6 +12,19 @@ import {
   type ReportPeriod,
 } from "./report-summary";
 import { getProject, listProjects } from "./project-adapter";
+import { loadConfig } from "./config";
+
+export interface PersistReportSnapshotResult {
+  ok: boolean;
+  path?: string;
+  error?: string;
+}
+
+interface PersistReportSnapshotOptions {
+  reportsDir?: string;
+  mkdirSync?: typeof fsMkdirSync;
+  writeFileSync?: typeof fsWriteFileSync;
+}
 
 export function loadReportSummary(input: {
   date: string;
@@ -41,7 +59,7 @@ export function loadReportSummary(input: {
     projectName = projectFilter ?? "All Projects";
   }
 
-  return buildReportSummary({
+  const summary = buildReportSummary({
     date: input.date,
     period: input.period,
     projectId: summaryProjectId,
@@ -50,4 +68,47 @@ export function loadReportSummary(input: {
     tasks,
     sessions,
   });
+  persistReportSnapshot(summary);
+  return summary;
+}
+
+export function persistReportSnapshot(
+  summary: ReportSummary,
+  options: PersistReportSnapshotOptions = {},
+): PersistReportSnapshotResult {
+  const reportsDir = options.reportsDir ?? join(loadConfig().devlogDir, "reports");
+  const mkdirSync = options.mkdirSync ?? fsMkdirSync;
+  const writeFileSync = options.writeFileSync ?? fsWriteFileSync;
+  const filePath = join(reportsDir, getReportSnapshotFileName(summary));
+
+  try {
+    mkdirSync(reportsDir, { recursive: true });
+    writeFileSync(filePath, JSON.stringify(summary, null, 2), "utf-8");
+    return { ok: true, path: filePath };
+  } catch (error) {
+    return {
+      ok: false,
+      path: filePath,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export function getReportSnapshotFileName(summary: ReportSummary): string {
+  const rangeKey = summary.range.startDate === summary.range.endDate
+    ? summary.range.startDate
+    : `${summary.range.startDate}_to_${summary.range.endDate}`;
+  return [
+    summary.range.period,
+    rangeKey,
+    sanitizeSnapshotSegment(summary.projectId),
+  ].join("-") + ".json";
+}
+
+function sanitizeSnapshotSegment(value: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return sanitized || "unknown";
 }

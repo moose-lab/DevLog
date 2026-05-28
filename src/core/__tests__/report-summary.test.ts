@@ -99,6 +99,25 @@ test("buildReportSummary groups daily task progress and session activity", () =>
     summary.sections.blocked.map((item) => item.title),
     ["Wire production storage"],
   );
+  assert.equal(summary.humanReport.status.value, "blocked");
+  assert.match(summary.humanReport.status.reason, /1 risk\/blocker/);
+  assert.match(summary.humanReport.executiveSummary, /Daily Report for DevLog/);
+  assert.deepEqual(
+    summary.humanReport.completedOutcomes.map((item) => item.title),
+    ["Implement daily export route"],
+  );
+  assert.deepEqual(
+    summary.humanReport.inProgress.map((item) => item.title),
+    ["Review summary copy"],
+  );
+  assert.deepEqual(
+    summary.humanReport.risksAndBlockers.map((item) => item.title),
+    ["Wire production storage"],
+  );
+  assert.deepEqual(
+    summary.humanReport.nextPriorities.map((item) => item.title),
+    ["Resolve: Wire production storage", "Continue: Review summary copy"],
+  );
   assert.match(
     summary.highlights[0],
     /Completed 1 task and moved 1 task into review/,
@@ -167,9 +186,34 @@ test("buildReportSummary supports weekly and monthly report windows", () => {
     weekly.sections.review.map((item) => item.title),
     ["Sunday release check"],
   );
+  assert.deepEqual(
+    weekly.humanReport.completedOutcomes.map((item) => item.title),
+    ["Monday backend work"],
+  );
+  assert.deepEqual(
+    weekly.humanReport.inProgress.map((item) => item.title),
+    ["Sunday release check"],
+  );
   assert.equal(monthly.range.startDate, "2026-05-01");
   assert.equal(monthly.range.endDate, "2026-05-31");
   assert.equal(monthly.metrics.completedInPeriod, 2);
+});
+
+test("buildReportSummary creates a useful no-activity human report for empty periods", () => {
+  const summary = buildReportSummary({
+    date: "2026-05-28",
+    projectId: "devlog",
+    projectName: "DevLog",
+    tasks: [],
+    sessions: [],
+  });
+
+  assert.equal(summary.humanReport.status.value, "no_activity");
+  assert.match(summary.humanReport.executiveSummary, /No DevLog work was recorded/);
+  assert.deepEqual(summary.humanReport.completedOutcomes, []);
+  assert.deepEqual(summary.humanReport.inProgress, []);
+  assert.deepEqual(summary.humanReport.risksAndBlockers, []);
+  assert.deepEqual(summary.humanReport.nextPriorities, []);
 });
 
 test("buildReportRange validates report period names", () => {
@@ -220,6 +264,20 @@ test("renderReportHtml escapes content and renders clear report sections", () =>
         updated_at: "2026-05-27 10:00:00",
         completed_at: "2026-05-27 10:30:00",
       }),
+      task({
+        id: "active-1",
+        title: "Polish report body",
+        description: "Move metrics into the appendix",
+        status: "in_progress",
+        updated_at: "2026-05-27 11:00:00",
+      }),
+      task({
+        id: "blocked-1",
+        title: "Store report snapshots",
+        status: "blocked",
+        updated_at: "2026-05-27 12:00:00",
+        fail_reason: "Needs <storage> decision",
+      }),
     ],
     sessions: [
       session({
@@ -239,8 +297,16 @@ test("renderReportHtml escapes content and renders clear report sections", () =>
   assert.match(html, /Daily Report/);
   assert.match(html, /DevLog/);
   assert.match(html, /Ship &lt;daily&gt; summary/);
-  assert.match(html, /Completed Work/);
-  assert.match(html, /Session Timeline/);
+  assert.match(html, /Executive Summary/);
+  assert.match(html, /Completed Outcomes/);
+  assert.match(html, /In Progress/);
+  assert.match(html, /Risks And Blockers/);
+  assert.match(html, /Next Priorities/);
+  assert.match(html, /Evidence Appendix/);
+  assert.match(html, /Snapshot/);
+  assert.match(html, /Needs &lt;storage&gt; decision/);
+  assert.ok(html.indexOf("Executive Summary") < html.indexOf("Evidence Appendix"));
+  assert.ok(html.indexOf("Completed Outcomes") < html.indexOf("Snapshot"));
   assert.doesNotMatch(html, /<script>alert/);
 });
 
