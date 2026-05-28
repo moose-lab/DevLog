@@ -48,11 +48,18 @@ test("shouldRestartUnresponsiveSession only restarts live stale processes", () =
 });
 
 test("parseClaudeBinaryPath ignores shell alias descriptions", () => {
+  // parseClaudeBinaryPath uses fs.existsSync to filter out junk lines that
+  // happen to start with "/" (e.g. shell-alias descriptions). The candidate
+  // path must therefore actually exist on the runner. process.execPath is
+  // the running Node binary — always absolute, always present, on every
+  // platform — which makes this test deterministic across Mac/Linux/Windows.
+  const realPath = process.execPath;
+
   assert.equal(
     parseClaudeBinaryPath(
-      "alias claude='command claude --dangerously-skip-permissions'\n/Users/moose/.local/bin/claude",
+      `alias claude='command claude --dangerously-skip-permissions'\n${realPath}`,
     ),
-    "/Users/moose/.local/bin/claude",
+    realPath,
   );
 
   assert.equal(
