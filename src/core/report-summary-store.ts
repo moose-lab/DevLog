@@ -2,7 +2,8 @@ import {
   mkdirSync as fsMkdirSync,
   writeFileSync as fsWriteFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { getDb } from "./db";
 import {
   buildReportSummary,
@@ -76,10 +77,17 @@ export function persistReportSnapshot(
   summary: ReportSummary,
   options: PersistReportSnapshotOptions = {},
 ): PersistReportSnapshotResult {
-  const reportsDir = options.reportsDir ?? join(loadConfig().devlogDir, "reports");
+  const reportsDir = resolve(options.reportsDir ?? join(loadConfig().devlogDir, "reports"));
   const mkdirSync = options.mkdirSync ?? fsMkdirSync;
   const writeFileSync = options.writeFileSync ?? fsWriteFileSync;
-  const filePath = join(reportsDir, getReportSnapshotFileName(summary));
+  const filePath = resolve(reportsDir, getReportSnapshotFileName(summary));
+  if (!isPathInsideDirectory(reportsDir, filePath)) {
+    return {
+      ok: false,
+      path: filePath,
+      error: "Report snapshot path escapes reports directory",
+    };
+  }
 
   try {
     mkdirSync(reportsDir, { recursive: true });
@@ -95,20 +103,73 @@ export function persistReportSnapshot(
 }
 
 export function getReportSnapshotFileName(summary: ReportSummary): string {
-  const rangeKey = summary.range.startDate === summary.range.endDate
-    ? summary.range.startDate
-    : `${summary.range.startDate}_to_${summary.range.endDate}`;
+  const startDate = formatSnapshotDate(summary.range.startDate);
+  const endDate = formatSnapshotDate(summary.range.endDate);
+  const rangeKey = startDate === endDate ? startDate : `${startDate}_to_${endDate}`;
   return [
-    summary.range.period,
+    getSnapshotPeriodSegment(summary.range.period),
     rangeKey,
-    sanitizeSnapshotSegment(summary.projectId),
+    getProjectSnapshotSegment(summary.projectId),
   ].join("-") + ".json";
 }
 
-function sanitizeSnapshotSegment(value: string): string {
-  const sanitized = value
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return sanitized || "unknown";
+function getSnapshotPeriodSegment(value: string): string {
+  if (value === "daily" || value === "weekly" || value === "monthly") return value;
+  return "report";
+}
+
+function formatSnapshotDate(value: string): string {
+  const parsed = parseSnapshotDate(value);
+  if (!parsed) return "unknown-date";
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseSnapshotDate(value: string): Date | null {
+  if (
+    value.length !== 10 ||
+    value.charCodeAt(4) !== 45 ||
+    value.charCodeAt(7) !== 45
+  ) {
+    return null;
+  }
+
+  const year = parseDateNumber(value, 0, 4);
+  const month = parseDateNumber(value, 5, 7);
+  const day = parseDateNumber(value, 8, 10);
+  if (year == null || month == null || day == null) return null;
+
+  const parsed = new Date(year, month - 1, day);
+  if (
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
+function parseDateNumber(value: string, start: number, end: number): number | null {
+  let result = 0;
+  for (let index = start; index < end; index += 1) {
+    const digit = value.charCodeAt(index) - 48;
+    if (digit < 0 || digit > 9) return null;
+    result = result * 10 + digit;
+  }
+  return result;
+}
+
+function getProjectSnapshotSegment(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) return "project-unknown";
+  const hash = createHash("sha256").update(normalized).digest("hex").slice(0, 12);
+  return `project-${hash}`;
+}
+
+function isPathInsideDirectory(root: string, filePath: string): boolean {
+  const relativePath = relative(root, filePath);
+  return relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
 }

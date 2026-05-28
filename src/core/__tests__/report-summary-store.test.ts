@@ -33,8 +33,9 @@ test("persistReportSnapshot writes backend JSON under a period/range/project fil
     const result = persistReportSnapshot(summary, { reportsDir });
 
     assert.equal(result.ok, true);
-    assert.equal(getReportSnapshotFileName(summary), "daily-2026-05-28-dev-log.json");
-    assert.equal(result.path, join(reportsDir, "daily-2026-05-28-dev-log.json"));
+    const fileName = getReportSnapshotFileName(summary);
+    assert.match(fileName, /^daily-2026-05-28-project-[a-f0-9]{12}\.json$/);
+    assert.equal(result.path, join(reportsDir, fileName));
 
     const json = JSON.parse(await readFile(result.path!, "utf-8"));
     assert.equal(json.projectId, "dev/log");
@@ -43,6 +44,23 @@ test("persistReportSnapshot writes backend JSON under a period/range/project fil
   } finally {
     await rm(reportsDir, { recursive: true, force: true });
   }
+});
+
+test("getReportSnapshotFileName keeps raw project ids out of the path", () => {
+  const summary = buildReportSummary({
+    date: "2026-05-28",
+    period: "daily",
+    projectId: "../dev/log",
+    projectName: "DevLog",
+    tasks: [],
+    sessions: [],
+    generatedAt: "2026-05-28T09:31:00.000Z",
+  });
+
+  const fileName = getReportSnapshotFileName(summary);
+
+  assert.match(fileName, /^daily-2026-05-28-project-[a-f0-9]{12}\.json$/);
+  assert.doesNotMatch(fileName, /\.\.|\/|\\/);
 });
 
 test("persistReportSnapshot returns a non-fatal failure when snapshot writing fails", () => {
