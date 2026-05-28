@@ -30,7 +30,7 @@ export function loadReportSummary(input: {
       .prepare("SELECT * FROM sessions ORDER BY project_id, started_at ASC")
       .all() as ReportSession[];
 
-  const projectNames = Object.fromEntries(
+  const projectNames = new Map(
     listProjects().map((project) => [project.id, project.name]),
   );
   const summaryProjectId = projectFilter ?? "all";

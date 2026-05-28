@@ -92,7 +92,7 @@ interface BuildReportSummaryInput {
   period?: ReportPeriod;
   projectId: string;
   projectName: string;
-  projectNames?: Record<string, string>;
+  projectNames?: Map<string, string>;
   tasks: ReportTask[];
   sessions: ReportSession[];
   generatedAt?: string;
@@ -237,7 +237,7 @@ export function buildReportSummary(input: BuildReportSummaryInput): ReportSummar
     projectBreakdown: buildProjectBreakdown({
       tasks: touchedTasks,
       sessions: dailySessions,
-      projectNames: input.projectNames ?? { [input.projectId]: input.projectName },
+      projectNames: input.projectNames ?? new Map([[input.projectId, input.projectName]]),
     }),
     sections: {
       completed: completedTasks.map(toTaskItem),
@@ -355,7 +355,7 @@ function dateInRange(value: string | null | undefined, range: ReportRange): bool
 function buildProjectBreakdown(input: {
   tasks: ReportTask[];
   sessions: ReportSession[];
-  projectNames: Record<string, string>;
+  projectNames: Map<string, string>;
 }): ReportProjectBreakdown[] {
   const rows = new Map<string, ReportProjectBreakdown>();
   const getRow = (projectId: string) => {
@@ -363,7 +363,7 @@ function buildProjectBreakdown(input: {
     if (existing) return existing;
     const row: ReportProjectBreakdown = {
       projectId,
-      projectName: input.projectNames[projectId] ?? projectId,
+      projectName: input.projectNames.get(projectId) ?? projectId,
       touchedTasks: 0,
       completedTasks: 0,
       reviewTasks: 0,

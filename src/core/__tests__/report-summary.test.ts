@@ -182,6 +182,30 @@ test("buildReportRange validates report period names", () => {
   assert.equal(buildReportRange("quarterly", "2026-05-27"), null);
 });
 
+test("buildReportSummary resolves project names from a Map for dangerous project ids", () => {
+  const summary = buildReportSummary({
+    date: "2026-05-27",
+    projectId: "__proto__",
+    projectName: "Prototype Project",
+    projectNames: new Map([
+      ["__proto__", "Prototype Project"],
+    ]),
+    tasks: [
+      task({
+        id: "dangerous-project",
+        project_id: "__proto__",
+        title: "Handle dynamic project ids safely",
+        status: "done",
+        updated_at: "2026-05-27 10:00:00",
+        completed_at: "2026-05-27 11:00:00",
+      }),
+    ],
+    sessions: [],
+  });
+
+  assert.equal(summary.projectBreakdown[0]?.projectName, "Prototype Project");
+});
+
 test("renderReportHtml escapes content and renders clear report sections", () => {
   const summary = buildReportSummary({
     date: "2026-05-27",
