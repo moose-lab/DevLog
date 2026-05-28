@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DragDropContext, type DropResult } from "@hello-pangea/dnd";
+import { FileText } from "lucide-react";
 import { KanbanColumn } from "./column";
 import { CreateTaskDialog } from "./create-task-dialog";
 import { TaskDetailDialog } from "./task-detail-dialog";
@@ -10,6 +12,7 @@ import { useTasks } from "@/hooks/use-tasks";
 import { useTaskSessions } from "@/hooks/use-task-sessions";
 import type { Task, TaskStatus } from "@/core/types-dashboard";
 import type { SessionRuntimeAuthMode } from "@/core/session-runtime-auth";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const COLUMNS: TaskStatus[] = ["todo", "in_progress", "review", "blocked", "done"];
@@ -123,7 +126,13 @@ export function KanbanBoard() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" size="sm" asChild>
+          <Link href="/reports">
+            <FileText className="h-4 w-4" />
+            Reports
+          </Link>
+        </Button>
         <CreateTaskDialog onSubmit={createTask} />
       </div>
       <DragDropContext onDragEnd={handleDragEnd}>

@@ -54,7 +54,12 @@ Start with `devlog serve` or `bun run dev`:
 - **Sessions** — Launch and monitor Claude Code sessions
 - **Worktrees** — Git worktree management
 - **Locks** — File conflict detection across worktrees
-- **DevLog** — CLI stats in the browser
+- **Reports** — Daily, weekly, and monthly work-output reports with HTML export
+- **Cost & Usage** — CLI stats, costs, credits, and quotas in the browser
+
+To get your daily summary, open `Analytics -> Reports`, select `Daily`, choose the date,
+and click `Export HTML`. The dashboard downloads a standalone report named
+`devlog-daily-report-YYYY-MM-DD.html`.
 
 ---
 
