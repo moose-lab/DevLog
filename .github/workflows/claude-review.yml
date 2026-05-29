@@ -1,0 +1,84 @@
+name: Claude Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write   # required by anthropics/claude-code-action for OIDC App token exchange
+
+jobs:
+  review:
+    name: Claude Review
+    # pull_request events always run; issue_comment events only when the
+    # comment body contains "@claude" so random comments don't cost tokens.
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude'))
+    runs-on: ubuntu-latest
+    # Job-level env propagates into composite-action sub-steps; step-level
+    # env does not. claude-code-action's internal validation runs inside one
+    # such sub-step, so the credential must be hoisted here.
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so Claude can see diff context across rebases.
+          fetch-depth: 0
+
+      - name: Claude review
+        uses: anthropics/claude-code-action@v1
+        with:
+          # Authenticate via Claude subscription (OAuth) instead of an API
+          # key, so reviews draw on the Pro/Max plan rather than API credits.
+          # Defined as a `with:` input because the action's credential
+          # validation checks the input, not the env var.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Post Claude's summary as a single sticky PR comment. Without
+          # this, the action only surfaces inline-comment tool calls, and a
+          # top-level summary prompt produces "No buffered inline comments"
+          # and posts nothing.
+          use_sticky_comment: true
+          # Without these tools the agent cannot post its review: runs end with
+          # "No buffered inline comments" + permission denials and nothing is
+          # published. Mirrors anthropics/claude-code-action's PR-review example.
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+          prompt: |
+            You are reviewing a pull request in moose-lab/DevLog, a TypeScript /
+            Next.js 16 / Bun developer-tools project (CLI + dashboard for Claude
+            Code sessions).
+
+            Review priorities, in order:
+            1. Correctness — logic bugs, edge cases, error handling, async
+               race conditions, off-by-one in date/window calculations.
+            2. Cross-platform safety — no hardcoded /Users/ paths, no timezone
+               assumptions (the repo has a known TZ-coupling in cost-tracker;
+               flag any new code that adds similar coupling).
+            3. Security — input validation on anything read from .jsonl files
+               or shell output, no secret values in code or logs, no SQL/shell
+               injection in dynamically built commands.
+            4. TypeScript type safety — flag any `as any`, unnecessary `!`,
+               or types that paper over real uncertainty.
+            5. Test coverage — meaningful tests for new logic; flag missing.
+
+            Skip nitpicky style comments (the project has no linter yet).
+            Be concise. Output format:
+
+            **Findings**
+            - [must-fix] <description with file:line>
+            - [should-fix] <description with file:line>
+            - [nit] <description with file:line>
+
+            **Verdict:** APPROVE | REQUEST_CHANGES | COMMENT
