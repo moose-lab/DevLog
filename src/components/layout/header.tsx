@@ -9,6 +9,8 @@ const PAGE_TITLES: Record<string, string> = {
   "/worktrees": "Worktrees",
   "/locks": "Locks",
   "/devlog": "DevLog",
+  "/reports": "Reports",
+  "/settings": "Settings",
 };
 
 export function Header() {

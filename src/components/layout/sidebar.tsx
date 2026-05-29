@@ -11,6 +11,7 @@ import {
   BarChart3,
   FolderOpen,
   FileText,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/core/dashboard-utils";
 import { useProjects } from "@/hooks/use-projects";
@@ -47,6 +48,10 @@ const NAV_SECTIONS = [
       { href: "/reports", label: "Reports", icon: FileText },
       { href: "/devlog", label: "Cost & Usage", icon: BarChart3 },
     ],
+  },
+  {
+    label: "SYSTEM",
+    items: [{ href: "/settings", label: "Settings", icon: Settings }],
   },
 ] as const;
 

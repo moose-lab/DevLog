@@ -41,6 +41,7 @@ function session(overrides: Partial<Session>): Session {
     agent_team_id: "implementation-review-team",
     session_auth_mode: "backend-oauth",
     agent_api_key_env_var: null,
+    agent_model: "claude-sonnet-4-6",
     prompt: null,
     exit_code: null,
     log_path: null,

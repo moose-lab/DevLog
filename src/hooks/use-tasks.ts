@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { Task, TaskStatus, TaskPriority, Session } from "@/core/types-dashboard";
-import type { SessionRuntimeAuthMode } from "@/core/session-runtime-auth";
+import type { SessionRuntimeAuthInput } from "@/core/session-runtime-auth";
 
 export function useTasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -81,9 +81,7 @@ export function useTasks() {
     agentConfig?: {
       coding_agent_id?: string;
       agent_team_id?: string;
-      session_auth_mode?: SessionRuntimeAuthMode;
-      agent_api_key_env_var?: string;
-    }
+    } & SessionRuntimeAuthInput
   ): Promise<{ session: Session } | null> => {
     const res = await fetch(`/api/tasks/${id}/execute`, {
       method: "POST",

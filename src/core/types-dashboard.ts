@@ -42,8 +42,13 @@ export interface Session {
   claude_session_id: string | null;
   coding_agent_id: string;
   agent_team_id: string;
-  session_auth_mode: "backend-oauth" | "agent-api-key";
+  session_auth_mode:
+    | "local-cli"
+    | "anthropic-api-key"
+    | "backend-oauth"
+    | "agent-api-key";
   agent_api_key_env_var: string | null;
+  agent_model: string;
   prompt: string | null;
   exit_code: number | null;
   log_path: string | null;

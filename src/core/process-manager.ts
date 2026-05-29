@@ -1,4 +1,5 @@
 import { spawn, execFileSync, type ChildProcess } from "child_process";
+import { randomUUID } from "crypto";
 import * as readline from "readline";
 import fs from "fs";
 import { getDb } from "./db";
@@ -12,6 +13,8 @@ import { onSessionExit } from "./task-lifecycle";
 import {
   buildClaudeProcessEnv,
   resolveSessionRuntimeAuthConfig,
+  type SessionRuntimeAuthConfig,
+  type SessionRuntimeAuthInput,
 } from "./session-runtime-auth";
 
 export function parseClaudeBinaryPath(output: string): string | null {
@@ -38,7 +41,7 @@ function resolveClaudeBinaryPath(): string {
   }
 
   candidates.push(
-    "/Users/moose/.local/bin/claude",
+    ...(process.env.HOME ? [`${process.env.HOME}/.local/bin/claude`] : []),
     "/opt/homebrew/bin/claude",
     "/usr/local/bin/claude",
   );
@@ -77,6 +80,11 @@ interface PendingPermission {
   toolInput: Record<string, unknown>;
 }
 
+interface QueuedMessage {
+  message: string;
+  runtimeAuthInput?: SessionRuntimeAuthInput;
+}
+
 interface SessionProcess {
   proc: ChildProcess;
   sessionId: string;
@@ -106,9 +114,42 @@ export function shouldRestartUnresponsiveSession({
   return now - lastActivityAt > SESSION_UNRESPONSIVE_MS && !killed && !paused;
 }
 
+export function needsBrowserApiKeyForWatchdogRestart(
+  sessionAuthMode: string | null | undefined,
+  isProcessing: boolean,
+): boolean {
+  return isProcessing && sessionAuthMode === "anthropic-api-key";
+}
+
+export function buildClaudeProcessArgs(
+  runtimeAuthConfig: SessionRuntimeAuthConfig,
+  claudeSessionId: string | null,
+  allowedTools: string[],
+): string[] {
+  const args = [
+    "-p",
+    "--input-format", "stream-json",
+    "--output-format", "stream-json",
+    "--verbose",
+    "--model", runtimeAuthConfig.model,
+  ];
+
+  if (runtimeAuthConfig.mode === "anthropic-api-key") {
+    args.push("--bare");
+  }
+
+  if (claudeSessionId) {
+    args.push("--resume", claudeSessionId);
+  }
+
+  args.push("--allowedTools", ...allowedTools);
+
+  return args;
+}
+
 class ProcessManager {
   private sessions = new Map<string, SessionProcess>();
-  private messageQueues = new Map<string, string[]>();
+  private messageQueues = new Map<string, QueuedMessage[]>();
 
   constructor() {
     const watchdog = setInterval(
@@ -144,6 +185,36 @@ class ProcessManager {
         continue;
       }
 
+      const sessionAuthMode = this.getStoredSessionAuthMode(sessionId);
+      const cannotRestartWithoutBrowserKey =
+        needsBrowserApiKeyForWatchdogRestart(sessionAuthMode, sp.isProcessing);
+
+      if (cannotRestartWithoutBrowserKey) {
+        const message =
+          "BYOK session became unresponsive and cannot be restarted because DevLog does not store browser-provided API keys. Re-enter the key in Settings and start a new turn.";
+        this.emitGlobalSystemLog("warning", sessionId, message, "[WATCHDOG]");
+
+        try {
+          sp.proc.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+        this.sessions.delete(sessionId);
+
+        try {
+          const db = getDb();
+          db.prepare(
+            "UPDATE sessions SET status = 'failed', pid = NULL, ended_at = datetime('now') WHERE id = ?",
+          ).run(sessionId);
+        } catch {
+          // ignore
+        }
+
+        streamManager.emit(sessionId, { type: "error", message });
+        streamManager.emit(sessionId, { type: "status", status: "failed" });
+        continue;
+      }
+
       this.emitGlobalSystemLog(
         "warning",
         sessionId,
@@ -173,6 +244,18 @@ class ProcessManager {
     }
   }
 
+  private getStoredSessionAuthMode(sessionId: string): string | null {
+    try {
+      const db = getDb();
+      const row = db
+        .prepare("SELECT session_auth_mode FROM sessions WHERE id = ? LIMIT 1")
+        .get(sessionId) as { session_auth_mode: string | null } | undefined;
+      return row?.session_auth_mode ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   private requeueLastUserMessage(sessionId: string): void {
     try {
       const db = getDb();
@@ -185,10 +268,22 @@ class ProcessManager {
       if (!row?.content) return;
 
       const queue = this.messageQueues.get(sessionId) ?? [];
-      queue.unshift(row.content);
+      queue.unshift({ message: row.content });
       this.messageQueues.set(sessionId, queue);
     } catch {
       // ignore
+    }
+  }
+
+  private sessionExists(sessionId: string): boolean {
+    try {
+      const db = getDb();
+      const row = db
+        .prepare("SELECT 1 AS exists_flag FROM sessions WHERE id = ? LIMIT 1")
+        .get(sessionId) as { exists_flag: number } | undefined;
+      return Boolean(row);
+    } catch {
+      return false;
     }
   }
 
@@ -200,7 +295,10 @@ class ProcessManager {
    * If a process already exists and is alive, returns it.
    * If no process exists, spawns a new one (with --resume if continuing).
    */
-  private ensureProcess(sessionId: string): SessionProcess | null {
+  private ensureProcess(
+    sessionId: string,
+    runtimeAuthInput: SessionRuntimeAuthInput = {},
+  ): SessionProcess | null {
     const existing = this.sessions.get(sessionId);
     if (existing && !existing.proc.killed) {
       if (existing.paused) {
@@ -224,32 +322,26 @@ class ProcessManager {
       claude_session_id: string | null;
       session_auth_mode: string | null;
       agent_api_key_env_var: string | null;
+      agent_model: string | null;
     } | undefined;
 
     if (!session) return null;
 
-    // Build args for persistent bidirectional streaming
-    const args = [
-      "-p",
-      "--input-format", "stream-json",
-      "--output-format", "stream-json",
-      "--verbose",
-    ];
-
-    // Resume previous conversation if we have a Claude session ID
-    if (session.claude_session_id) {
-      args.push("--resume", session.claude_session_id);
-    }
-
-    // Pre-authorize common tools to reduce permission prompts
-    args.push("--allowedTools", ...ALLOWED_TOOLS);
-
     // Clean env: remove CLAUDECODE so child doesn't think it's nested
     const { CLAUDECODE: _, ...cleanEnv } = process.env;
     const runtimeAuthConfig = resolveSessionRuntimeAuthConfig({
-      session_auth_mode: session.session_auth_mode,
-      agent_api_key_env_var: session.agent_api_key_env_var,
+      session_auth_mode:
+        runtimeAuthInput.session_auth_mode ?? session.session_auth_mode,
+      agent_api_key_env_var:
+        runtimeAuthInput.agent_api_key_env_var ?? session.agent_api_key_env_var,
+      agent_model: runtimeAuthInput.agent_model ?? session.agent_model,
+      anthropic_api_key: runtimeAuthInput.anthropic_api_key,
     });
+    const args = buildClaudeProcessArgs(
+      runtimeAuthConfig,
+      session.claude_session_id,
+      ALLOWED_TOOLS,
+    );
     const processEnv = buildClaudeProcessEnv(
       { ...cleanEnv, PATH: userPath },
       runtimeAuthConfig,
@@ -377,7 +469,7 @@ class ProcessManager {
       }
 
       // Update status to idle (can spawn new process for next message)
-      const newStatus = code === 0 ? "idle" : "idle";
+      const newStatus = "idle";
       let statusUpdated = false;
       try {
         const result = db.prepare(
@@ -412,13 +504,19 @@ class ProcessManager {
    * If the session is currently processing a turn, the message is queued
    * and will be sent automatically when the current turn completes.
    */
-  async sendMessage(sessionId: string, message: string): Promise<void> {
-    const sp = this.ensureProcess(sessionId);
+  async sendMessage(
+    sessionId: string,
+    message: string,
+    runtimeAuthInput?: SessionRuntimeAuthInput,
+  ): Promise<void> {
+    const sp = this.ensureProcess(sessionId, runtimeAuthInput);
     if (!sp) {
-      streamManager.emit(sessionId, {
-        type: "error",
-        message: "Session not found",
-      });
+      if (!this.sessionExists(sessionId)) {
+        streamManager.emit(sessionId, {
+          type: "error",
+          message: "Session not found",
+        });
+      }
       return;
     }
 
@@ -428,7 +526,7 @@ class ProcessManager {
         this.messageQueues.set(sessionId, []);
       }
       const queue = this.messageQueues.get(sessionId)!;
-      queue.push(message);
+      queue.push({ message, runtimeAuthInput });
 
       streamManager.emit(sessionId, {
         type: "message_queued",
@@ -508,12 +606,12 @@ class ProcessManager {
 
     // If we still have a process, write directly. Otherwise, ensureProcess + write.
     if (sp && !sp.proc.killed) {
-      this.writeMessage(sp, nextMessage);
+      this.writeMessage(sp, nextMessage.message);
     } else {
       // Need to spawn a new process (previous one exited)
-      const newSp = this.ensureProcess(sessionId);
+      const newSp = this.ensureProcess(sessionId, nextMessage.runtimeAuthInput);
       if (newSp) {
-        this.writeMessage(newSp, nextMessage);
+        this.writeMessage(newSp, nextMessage.message);
       }
     }
   }
@@ -596,7 +694,7 @@ class ProcessManager {
 
     // Permission request events
     if (type === "permission_request") {
-      const requestId = `perm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const requestId = `perm_${randomUUID()}`;
 
       sp.pendingPermission = {
         requestId,

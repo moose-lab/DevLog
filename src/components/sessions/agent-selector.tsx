@@ -8,14 +8,15 @@ import {
   resolveAgentExecutionConfig,
 } from "@/core/agent-presets";
 import {
-  DEFAULT_AGENT_API_KEY_ENV_VAR,
+  DEFAULT_AGENT_MODEL,
   DEFAULT_SESSION_AUTH_MODE,
-  SESSION_RUNTIME_AUTH_OPTIONS,
-  type SessionRuntimeAuthMode,
   resolveSessionRuntimeAuthConfig,
 } from "@/core/session-runtime-auth";
+import {
+  AGENT_MODEL_OPTIONS,
+  type AgentSettings,
+} from "@/core/agent-settings";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -28,24 +29,26 @@ import {
 interface AgentSelectorProps {
   codingAgentId: string;
   agentTeamId: string;
-  sessionAuthMode: SessionRuntimeAuthMode;
-  agentApiKeyEnvVar: string;
+  runtimeSettings?: Pick<AgentSettings, "executionMode" | "model">;
   onCodingAgentChange: (id: string) => void;
   onAgentTeamChange: (id: string) => void;
-  onSessionAuthModeChange: (mode: SessionRuntimeAuthMode) => void;
-  onAgentApiKeyEnvVarChange: (envVar: string) => void;
 }
 
 export function AgentSelector({
   codingAgentId,
   agentTeamId,
-  sessionAuthMode,
-  agentApiKeyEnvVar,
+  runtimeSettings,
   onCodingAgentChange,
   onAgentTeamChange,
-  onSessionAuthModeChange,
-  onAgentApiKeyEnvVarChange,
 }: AgentSelectorProps) {
+  const modelLabel =
+    AGENT_MODEL_OPTIONS.find((model) => model.id === runtimeSettings?.model)
+      ?.label ?? "Claude Sonnet 4.6";
+  const executionLabel =
+    runtimeSettings?.executionMode === "anthropic-api"
+      ? "Anthropic API (BYOK)"
+      : "Local code-agent CLI";
+
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <div className="space-y-1.5">
@@ -78,37 +81,19 @@ export function AgentSelector({
           </SelectContent>
         </Select>
       </div>
-      <div className="space-y-1.5">
-        <Label className="text-xs text-muted-foreground">LLM access</Label>
-        <Select
-          value={sessionAuthMode}
-          onValueChange={(value) =>
-            onSessionAuthModeChange(value as SessionRuntimeAuthMode)
-          }
-        >
-          <SelectTrigger className="h-9">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {SESSION_RUNTIME_AUTH_OPTIONS.map((option) => (
-              <SelectItem key={option.id} value={option.id}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      {sessionAuthMode === "agent-api-key" && (
+      {runtimeSettings && (
         <div className="space-y-1.5 sm:col-span-2">
-          <Label className="text-xs text-muted-foreground">API key env</Label>
-          <Input
-            className="h-9 font-mono text-xs"
-            value={agentApiKeyEnvVar}
-            onChange={(event) =>
-              onAgentApiKeyEnvVarChange(event.currentTarget.value)
-            }
-            placeholder={DEFAULT_AGENT_API_KEY_ENV_VAR}
-          />
+          <Label className="text-xs text-muted-foreground">
+            Execution & model
+          </Label>
+          <div className="flex flex-wrap gap-1.5 rounded-md border border-border bg-muted/20 px-2.5 py-2">
+            <Badge variant="outline" className="text-[10px]">
+              {executionLabel}
+            </Badge>
+            <Badge variant="secondary" className="text-[10px]">
+              {modelLabel}
+            </Badge>
+          </div>
         </div>
       )}
     </div>
@@ -120,11 +105,13 @@ export function AgentExecutionBadges({
   agentTeamId,
   sessionAuthMode,
   agentApiKeyEnvVar,
+  agentModel,
 }: {
   codingAgentId?: string | null;
   agentTeamId?: string | null;
   sessionAuthMode?: string | null;
   agentApiKeyEnvVar?: string | null;
+  agentModel?: string | null;
 }) {
   const config = resolveAgentExecutionConfig({
     coding_agent_id: codingAgentId ?? DEFAULT_CODING_AGENT_ID,
@@ -132,8 +119,12 @@ export function AgentExecutionBadges({
   });
   const runtimeAuth = resolveSessionRuntimeAuthConfig({
     session_auth_mode: sessionAuthMode ?? DEFAULT_SESSION_AUTH_MODE,
-    agent_api_key_env_var: agentApiKeyEnvVar ?? DEFAULT_AGENT_API_KEY_ENV_VAR,
+    agent_api_key_env_var: agentApiKeyEnvVar,
+    agent_model: agentModel ?? DEFAULT_AGENT_MODEL,
   });
+  const modelLabel =
+    AGENT_MODEL_OPTIONS.find((model) => model.id === runtimeAuth.model)
+      ?.label ?? runtimeAuth.model;
 
   return (
     <>
@@ -144,9 +135,12 @@ export function AgentExecutionBadges({
         {config.agentTeam.label}
       </Badge>
       <Badge variant="outline" className="text-[10px]">
-        {runtimeAuth.mode === "agent-api-key"
+        {runtimeAuth.usesLegacyEnvVar
           ? runtimeAuth.agentApiKeyEnvVar
           : runtimeAuth.label}
+      </Badge>
+      <Badge variant="outline" className="text-[10px]">
+        {modelLabel}
       </Badge>
     </>
   );
