@@ -4,6 +4,13 @@ import type {
   Task,
   TaskStatus,
 } from "./types-dashboard";
+import {
+  buildHumanReportEvidence,
+  type HumanReportEvidence,
+  type HumanReportItem,
+  type HumanReportRisk,
+} from "./report-evidence";
+import { HUMAN_REPORT_SKILL } from "./report-skill";
 
 export type ReportTask = Task;
 export type ReportSession = Session;
@@ -69,12 +76,31 @@ export interface ReportProjectBreakdown {
   runtimeMinutes: number;
 }
 
+export type HumanReportStatus = "on_track" | "at_risk" | "blocked" | "no_activity";
+
+export interface HumanReport {
+  title: string;
+  subtitle: string;
+  status: {
+    value: HumanReportStatus;
+    label: string;
+    reason: string;
+  };
+  executiveSummary: string;
+  completedOutcomes: HumanReportItem[];
+  inProgress: HumanReportItem[];
+  risksAndBlockers: HumanReportRisk[];
+  nextPriorities: HumanReportItem[];
+  evidence: HumanReportEvidence;
+}
+
 export interface ReportSummary {
   date: string;
   range: ReportRange;
   projectId: string;
   projectName: string;
   generatedAt: string;
+  humanReport: HumanReport;
   metrics: ReportMetrics;
   highlights: string[];
   projectBreakdown: ReportProjectBreakdown[];
@@ -225,6 +251,16 @@ export function buildReportSummary(input: BuildReportSummaryInput): ReportSummar
     failedSessions: dailySessions.filter((session) => session.status === "failed").length,
     runtimeMinutes,
   };
+  const humanEvidence = buildHumanReportEvidence({
+    range,
+    tasks: input.tasks,
+    sessions: input.sessions,
+  });
+  const humanReport = buildHumanReport({
+    range,
+    projectName: input.projectName,
+    evidence: humanEvidence,
+  });
 
   return {
     date: input.date,
@@ -232,6 +268,7 @@ export function buildReportSummary(input: BuildReportSummaryInput): ReportSummar
     projectId: input.projectId,
     projectName: input.projectName,
     generatedAt: input.generatedAt ?? new Date().toISOString(),
+    humanReport,
     metrics,
     highlights: buildHighlights(metrics),
     projectBreakdown: buildProjectBreakdown({
@@ -249,8 +286,116 @@ export function buildReportSummary(input: BuildReportSummaryInput): ReportSummar
   };
 }
 
+function buildHumanReport(input: {
+  range: ReportRange;
+  projectName: string;
+  evidence: HumanReportEvidence;
+}): HumanReport {
+  const status = buildHumanReportStatus(input.evidence);
+
+  return {
+    title: `${input.range.label}: ${input.projectName}`,
+    subtitle: rangeLabel(input.range),
+    status,
+    executiveSummary: buildExecutiveSummary({
+      range: input.range,
+      projectName: input.projectName,
+      evidence: input.evidence,
+      status,
+    }),
+    completedOutcomes: input.evidence.outcomes,
+    inProgress: input.evidence.progress,
+    risksAndBlockers: input.evidence.risks,
+    nextPriorities: buildNextPriorities(input.evidence),
+    evidence: input.evidence,
+  };
+}
+
+function buildHumanReportStatus(evidence: HumanReportEvidence): HumanReport["status"] {
+  const hasActivity = evidence.outcomes.length > 0
+    || evidence.progress.length > 0
+    || evidence.risks.length > 0
+    || evidence.appendix.sessions.length > 0;
+  if (!hasActivity) {
+    return {
+      value: "no_activity",
+      label: "No Activity",
+      reason: "No task or session evidence was recorded for this period.",
+    };
+  }
+
+  const blockedRisks = evidence.risks.filter((risk) => risk.severity === "blocked");
+  if (blockedRisks.length > 0) {
+    return {
+      value: "blocked",
+      label: "Blocked",
+      reason: `${plural(blockedRisks.length, "risk/blocker")} is blocking completion.`,
+    };
+  }
+
+  const failedRisks = evidence.risks.filter((risk) => risk.severity === "failed");
+  if (failedRisks.length > 0) {
+    return {
+      value: "at_risk",
+      label: "At Risk",
+      reason: `${plural(failedRisks.length, "failed item")} needs attention before the report can be considered healthy.`,
+    };
+  }
+
+  return {
+    value: "on_track",
+    label: "On Track",
+    reason: "No risks or blockers were detected in the period evidence.",
+  };
+}
+
+function buildExecutiveSummary(input: {
+  range: ReportRange;
+  projectName: string;
+  evidence: HumanReportEvidence;
+  status: HumanReport["status"];
+}): string {
+  if (input.status.value === "no_activity") {
+    const emptyState = HUMAN_REPORT_SKILL.sections.find((section) =>
+      section.id === "executive_summary"
+    )?.emptyState ?? "No recorded work for this period.";
+    return `No DevLog work was recorded for ${input.projectName} during ${rangeLabel(input.range)}. ${emptyState}`;
+  }
+
+  const parts = [
+    input.evidence.outcomes.length > 0
+      ? plural(input.evidence.outcomes.length, "completed outcome")
+      : null,
+    input.evidence.progress.length > 0
+      ? plural(input.evidence.progress.length, "in-progress item")
+      : null,
+    input.evidence.risks.length > 0
+      ? `${plural(input.evidence.risks.length, "risk/blocker")} need attention`
+      : null,
+  ].filter(Boolean);
+
+  return `${input.range.label} for ${input.projectName}: ${joinHumanList(parts)}. ${input.status.reason}`;
+}
+
+function buildNextPriorities(evidence: HumanReportEvidence): HumanReportItem[] {
+  const riskPriorities = evidence.risks.map((risk) => ({
+    ...risk,
+    id: `priority:${risk.id}`,
+    title: `Resolve: ${risk.title}`,
+    detail: risk.reason,
+  }));
+  const progressPriorities = evidence.progress.map((item) => ({
+    ...item,
+    id: `priority:${item.id}`,
+    title: `Continue: ${item.title}`,
+  }));
+
+  return [...riskPriorities, ...progressPriorities].slice(0, 5);
+}
+
 export function renderReportHtml(summary: ReportSummary): string {
-  const title = `${summary.range.label} - ${summary.projectName} - ${summary.range.startDate}`;
+  const report = summary.humanReport;
+  const title = `${report.title} - ${report.subtitle}`;
 
   return `<!doctype html>
 <html lang="en">
@@ -265,25 +410,31 @@ export function renderReportHtml(summary: ReportSummary): string {
     header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 1px solid #e4e4e7; padding-bottom: 20px; }
     h1 { margin: 0; font-size: 30px; line-height: 1.15; }
     h2 { margin: 0 0 12px; font-size: 18px; }
-    h3 { margin: 0; font-size: 15px; }
+    h3 { margin: 18px 0 10px; font-size: 15px; }
     p { margin: 0; }
     .muted { color: #71717a; }
     .date { text-align: right; font-size: 14px; color: #52525b; }
-    .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 24px 0; }
-    .metric, .section { border: 1px solid #e4e4e7; border-radius: 8px; background: #fff; padding: 16px; }
-    .metric strong { display: block; font-size: 26px; line-height: 1; margin-top: 8px; }
-    .section { margin-top: 16px; }
-    .highlight-list, .task-list, .session-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-    .highlight-list li, .task, .session { border: 1px solid #ececef; border-radius: 8px; padding: 12px; background: #fafafa; }
-    .task-title, .session-title { display: flex; justify-content: space-between; gap: 12px; font-weight: 600; }
+    .status { min-width: 220px; border: 1px solid #d4d4d8; border-radius: 8px; background: #fff; padding: 14px; }
+    .status strong { display: block; margin: 4px 0; font-size: 18px; }
+    .section { border: 1px solid #e4e4e7; border-radius: 8px; background: #fff; padding: 16px; margin-top: 16px; }
+    .lead { margin-top: 24px; }
+    .item-list, .snapshot-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+    .item { border: 1px solid #ececef; border-radius: 8px; padding: 12px; background: #fafafa; }
+    .item-title { display: flex; justify-content: space-between; gap: 12px; font-weight: 600; }
     .meta { margin-top: 6px; font-size: 13px; color: #71717a; }
     .badge { display: inline-flex; align-items: center; border: 1px solid #d4d4d8; border-radius: 999px; padding: 2px 8px; font-size: 12px; color: #3f3f46; white-space: nowrap; }
     .empty { color: #71717a; font-size: 14px; }
+    .appendix { background: #fcfcfd; }
+    .snapshot-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .snapshot-grid div { border: 1px solid #ececef; border-radius: 8px; padding: 12px; background: #fff; }
+    .snapshot-grid dt { color: #71717a; font-size: 12px; }
+    .snapshot-grid dd { margin: 4px 0 0; font-weight: 700; font-size: 20px; }
     @media (max-width: 760px) {
       main { padding: 24px 14px; }
       header { display: block; }
+      .status { margin-top: 14px; }
       .date { text-align: left; margin-top: 12px; }
-      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .snapshot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
 </head>
@@ -292,8 +443,13 @@ export function renderReportHtml(summary: ReportSummary): string {
     <header>
       <div>
         <p class="muted">DevLog</p>
-        <h1>${escapeHtml(summary.range.label)}</h1>
+        <h1>${escapeHtml(report.title)}</h1>
         <p class="muted">${escapeHtml(summary.projectName)}</p>
+      </div>
+      <div class="status" aria-label="Report status">
+        <p class="muted">Status</p>
+        <strong>${escapeHtml(report.status.label)}</strong>
+        <p class="meta">${escapeHtml(report.status.reason)}</p>
       </div>
       <div class="date">
         <p>${escapeHtml(rangeLabel(summary.range))}</p>
@@ -301,20 +457,16 @@ export function renderReportHtml(summary: ReportSummary): string {
       </div>
     </header>
 
-    <section class="grid" aria-label="Report metrics">
-      ${metricHtml("Completion", `${summary.metrics.completionRate}%`, `${summary.metrics.completedInPeriod} done of ${summary.metrics.touchedTasks} touched`)}
-      ${metricHtml("Project Progress", `${summary.metrics.projectProgressRate}%`, `${summary.metrics.doneTasks} done of ${summary.metrics.totalTasks} total`)}
-      ${metricHtml("Sessions", String(summary.metrics.sessions), `${summary.metrics.completedSessions} completed`)}
-      ${metricHtml("Focus Time", formatMinutes(summary.metrics.runtimeMinutes), "Completed session runtime")}
+    <section class="section lead">
+      <h2>Executive Summary</h2>
+      <p>${escapeHtml(report.executiveSummary)}</p>
     </section>
 
-    ${sectionHtml("Highlights", summary.highlights.map((text) => `<li>${escapeHtml(text)}</li>`).join(""), "highlight-list")}
-    ${projectBreakdownHtml(summary.projectBreakdown)}
-    ${taskSectionHtml("Completed Work", summary.sections.completed)}
-    ${taskSectionHtml("In Review", summary.sections.review)}
-    ${taskSectionHtml("Active / In Progress", summary.sections.active)}
-    ${taskSectionHtml("Blocked / Failed", summary.sections.blocked)}
-    ${sessionSectionHtml(summary.sessions)}
+    ${humanItemSectionHtml("Completed Outcomes", report.completedOutcomes)}
+    ${humanItemSectionHtml("In Progress", report.inProgress)}
+    ${humanRiskSectionHtml(report.risksAndBlockers)}
+    ${humanItemSectionHtml("Next Priorities", report.nextPriorities)}
+    ${evidenceAppendixHtml(summary)}
   </main>
 </body>
 </html>`;
@@ -461,6 +613,14 @@ function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
+function joinHumanList(parts: (string | null)[]): string {
+  const values = parts.filter((part): part is string => Boolean(part));
+  if (values.length === 0) return "no reportable activity";
+  if (values.length === 1) return values[0];
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(", ")}, and ${values[values.length - 1]}`;
+}
+
 function previewText(value: string | null | undefined): string | null {
   if (!value) return null;
   const compact = value.replace(/\s+/g, " ").trim();
@@ -468,65 +628,90 @@ function previewText(value: string | null | undefined): string | null {
   return compact.length > 140 ? `${compact.slice(0, 137)}...` : compact;
 }
 
-function metricHtml(label: string, value: string, detail: string): string {
-  return `<div class="metric"><p class="muted">${escapeHtml(label)}</p><strong>${escapeHtml(value)}</strong><p class="meta">${escapeHtml(detail)}</p></div>`;
-}
-
-function sectionHtml(title: string, body: string, listClass: string): string {
-  return `<section class="section"><h2>${escapeHtml(title)}</h2><ul class="${listClass}">${body}</ul></section>`;
-}
-
-function taskSectionHtml(title: string, tasks: ReportTaskItem[]): string {
-  if (tasks.length === 0) {
+function humanItemSectionHtml(title: string, items: HumanReportItem[]): string {
+  if (items.length === 0) {
     return `<section class="section"><h2>${escapeHtml(title)}</h2><p class="empty">No items.</p></section>`;
+  }
+
+  const body = items.map((item) => (
+    `<li class="item">
+      <div class="item-title"><span>${escapeHtml(item.title)}</span><span class="badge">${escapeHtml(statusLabel(item.status))}</span></div>
+      <p class="meta">${escapeHtml(item.detail)}</p>
+    </li>`
+  )).join("");
+
+  return `<section class="section"><h2>${escapeHtml(title)}</h2><ul class="item-list">${body}</ul></section>`;
+}
+
+function humanRiskSectionHtml(risks: HumanReportRisk[]): string {
+  if (risks.length === 0) {
+    return `<section class="section"><h2>Risks And Blockers</h2><p class="empty">No risks or blockers recorded.</p></section>`;
+  }
+
+  const body = risks.map((risk) => (
+    `<li class="item">
+      <div class="item-title"><span>${escapeHtml(risk.title)}</span><span class="badge">${escapeHtml(risk.severity)}</span></div>
+      <p class="meta">${escapeHtml(risk.reason)}</p>
+    </li>`
+  )).join("");
+
+  return `<section class="section"><h2>Risks And Blockers</h2><ul class="item-list">${body}</ul></section>`;
+}
+
+function evidenceAppendixHtml(summary: ReportSummary): string {
+  return `<section class="section appendix">
+    <h2>Evidence Appendix</h2>
+    ${snapshotHtml(summary)}
+    ${appendixTaskHtml(summary.humanReport.evidence.appendix.tasks)}
+    ${appendixSessionHtml(summary.humanReport.evidence.appendix.sessions)}
+  </section>`;
+}
+
+function snapshotHtml(summary: ReportSummary): string {
+  return `<h3>Snapshot</h3>
+  <dl class="snapshot-grid">
+    <div><dt>Completion</dt><dd>${escapeHtml(`${summary.metrics.completionRate}%`)}</dd></div>
+    <div><dt>Project Progress</dt><dd>${escapeHtml(`${summary.metrics.projectProgressRate}%`)}</dd></div>
+    <div><dt>Sessions</dt><dd>${escapeHtml(String(summary.metrics.sessions))}</dd></div>
+    <div><dt>Focus Time</dt><dd>${escapeHtml(formatMinutes(summary.metrics.runtimeMinutes))}</dd></div>
+  </dl>`;
+}
+
+function appendixTaskHtml(tasks: HumanReportEvidence["appendix"]["tasks"]): string {
+  if (tasks.length === 0) {
+    return `<h3>Task Evidence</h3><p class="empty">No task evidence recorded.</p>`;
   }
 
   const body = tasks.map((task) => {
     const detail = task.description || task.failReason || `Updated ${formatDateTime(task.updatedAt)}`;
-    return `<li class="task">
-      <div class="task-title"><span>${escapeHtml(task.title)}</span><span class="badge">${escapeHtml(statusLabel(task.status))}</span></div>
+    return `<li class="item">
+      <div class="item-title"><span>${escapeHtml(task.title)}</span><span class="badge">${escapeHtml(statusLabel(task.status))}</span></div>
       <p class="meta">${escapeHtml(detail)}</p>
     </li>`;
   }).join("");
 
-  return sectionHtml(title, body, "task-list");
+  return `<h3>Task Evidence</h3><ul class="item-list">${body}</ul>`;
 }
 
-function projectBreakdownHtml(projects: ReportProjectBreakdown[]): string {
-  if (projects.length === 0) {
-    return `<section class="section"><h2>Project Breakdown</h2><p class="empty">No project activity recorded.</p></section>`;
-  }
-
-  const body = projects.map((project) => (
-    `<li class="task">
-      <div class="task-title"><span>${escapeHtml(project.projectName)}</span><span class="badge">${escapeHtml(formatMinutes(project.runtimeMinutes))}</span></div>
-      <p class="meta">${escapeHtml(`${project.completedTasks} completed, ${project.reviewTasks} in review, ${project.activeTasks} active, ${project.blockedTasks} blocked/failed, ${project.sessions} sessions`)}</p>
-    </li>`
-  )).join("");
-
-  return sectionHtml("Project Breakdown", body, "task-list");
-}
-
-function sessionSectionHtml(sessions: ReportSessionItem[]): string {
+function appendixSessionHtml(sessions: HumanReportEvidence["appendix"]["sessions"]): string {
   if (sessions.length === 0) {
-    return `<section class="section"><h2>Session Timeline</h2><p class="empty">No sessions recorded.</p></section>`;
+    return `<h3>Session Evidence</h3><p class="empty">No session evidence recorded.</p>`;
   }
 
   const body = sessions.map((session) => {
-    const title = session.taskTitle || session.promptPreview || session.id;
     const detail = [
       formatDateTime(session.startedAt),
       session.runtimeMinutes == null ? null : formatMinutes(session.runtimeMinutes),
       session.promptPreview,
     ].filter(Boolean).join(" | ");
 
-    return `<li class="session">
-      <div class="session-title"><span>${escapeHtml(title)}</span><span class="badge">${escapeHtml(statusLabel(session.status))}</span></div>
+    return `<li class="item">
+      <div class="item-title"><span>${escapeHtml(session.id)}</span><span class="badge">${escapeHtml(statusLabel(session.status))}</span></div>
       <p class="meta">${escapeHtml(detail)}</p>
     </li>`;
   }).join("");
 
-  return sectionHtml("Session Timeline", body, "session-list");
+  return `<h3>Session Evidence</h3><ul class="item-list">${body}</ul>`;
 }
 
 function statusLabel(status: string): string {

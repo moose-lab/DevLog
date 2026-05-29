@@ -5,6 +5,8 @@ import type { ComponentType } from "react";
 import Link from "next/link";
 import {
   Activity,
+  AlertTriangle,
+  ArrowRightCircle,
   CalendarDays,
   CheckCircle2,
   Clock3,
@@ -18,20 +20,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   ReportSummary,
-  ReportProjectBreakdown,
-  ReportSessionItem,
-  ReportTaskItem,
   ReportPeriod,
 } from "@/core/report-summary";
 
@@ -147,36 +138,29 @@ export default function ReportsPage() {
 }
 
 function ReportsContent({ summary }: { summary: ReportSummary }) {
-  const hasWork = summary.metrics.touchedTasks > 0 || summary.metrics.sessions > 0;
+  const report = summary.humanReport;
+  const hasWork = report.status.value !== "no_activity";
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard
-          label="Completion"
-          value={`${summary.metrics.completionRate}%`}
-          detail={`${summary.metrics.completedInPeriod} done of ${summary.metrics.touchedTasks} touched`}
-          icon={CheckCircle2}
-        />
-        <MetricCard
-          label="Project Progress"
-          value={`${summary.metrics.projectProgressRate}%`}
-          detail={`${summary.metrics.doneTasks} done of ${summary.metrics.totalTasks} total`}
-          icon={Activity}
-        />
-        <MetricCard
-          label="Tasks Touched"
-          value={String(summary.metrics.touchedTasks)}
-          detail={`${summary.metrics.reviewTasks} in review, ${summary.metrics.blockedTasks + summary.metrics.failedTasks} blocked or failed`}
-          icon={ListChecks}
-        />
-        <MetricCard
-          label="Focus Time"
-          value={formatMinutes(summary.metrics.runtimeMinutes)}
-          detail={`${summary.metrics.sessions} sessions, ${summary.metrics.completedSessions} completed`}
-          icon={Clock3}
-        />
-      </div>
+      <Card>
+        <CardHeader className="flex flex-col gap-3 pb-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle className="text-base font-semibold">{report.title}</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">{report.subtitle}</p>
+          </div>
+          <Badge variant={report.status.value === "blocked" || report.status.value === "at_risk" ? "destructive" : "outline"}>
+            {report.status.label}
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div>
+            <p className="text-xs font-medium uppercase text-muted-foreground">Executive Summary</p>
+            <p className="mt-1 text-sm leading-6">{report.executiveSummary}</p>
+          </div>
+          <p className="text-xs text-muted-foreground">{report.status.reason}</p>
+        </CardContent>
+      </Card>
 
       {!hasWork && (
         <Card>
@@ -199,85 +183,208 @@ function ReportsContent({ summary }: { summary: ReportSummary }) {
         </Card>
       )}
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-medium">Highlights</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ul className="grid gap-2">
-            {summary.highlights.map((highlight) => (
-              <li
-                key={highlight}
-                className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm"
-              >
-                {highlight}
-              </li>
-            ))}
-          </ul>
-        </CardContent>
-      </Card>
-
-      <ProjectBreakdown projects={summary.projectBreakdown} />
-
       <div className="grid gap-4 xl:grid-cols-2">
-        <TaskSection title="Completed Work" tasks={summary.sections.completed} />
-        <TaskSection title="In Review" tasks={summary.sections.review} />
-        <TaskSection title="Active / In Progress" tasks={summary.sections.active} />
-        <TaskSection title="Blocked / Failed" tasks={summary.sections.blocked} />
+        <ReportItemSection
+          title="Completed Outcomes"
+          items={report.completedOutcomes}
+          empty="No completed outcomes recorded."
+          icon={CheckCircle2}
+        />
+        <ReportItemSection
+          title="In Progress"
+          items={report.inProgress}
+          empty="No in-progress work recorded."
+          icon={ListChecks}
+        />
+        <ReportRiskSection risks={report.risksAndBlockers} />
+        <ReportItemSection
+          title="Next Priorities"
+          items={report.nextPriorities}
+          empty="No next priorities inferred."
+          icon={ArrowRightCircle}
+        />
       </div>
 
-      <SessionTimeline sessions={summary.sessions} />
+      <EvidenceAppendix summary={summary} />
     </div>
   );
 }
 
-function ProjectBreakdown({
-  projects,
+function ReportItemSection({
+  title,
+  items,
+  empty,
+  icon: Icon,
 }: {
-  projects: ReportProjectBreakdown[];
+  title: string;
+  items: ReportSummary["humanReport"]["completedOutcomes"];
+  empty: string;
+  icon: ComponentType<{ className?: string }>;
 }) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-sm font-medium">Project Breakdown</CardTitle>
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-sm font-medium">{title}</CardTitle>
+          <Icon className="h-4 w-4 text-muted-foreground" />
+        </div>
       </CardHeader>
       <CardContent>
-        {projects.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No project activity recorded.</p>
+        {items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{empty}</p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Project</TableHead>
-                <TableHead className="text-right">Completed</TableHead>
-                <TableHead className="text-right">Review</TableHead>
-                <TableHead className="text-right">Active</TableHead>
-                <TableHead className="text-right">Blocked</TableHead>
-                <TableHead className="text-right">Sessions</TableHead>
-                <TableHead className="text-right">Runtime</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {projects.map((project) => (
-                <TableRow key={project.projectId}>
-                  <TableCell className="font-medium">{project.projectName}</TableCell>
-                  <TableCell className="text-right tabular-nums">{project.completedTasks}</TableCell>
-                  <TableCell className="text-right tabular-nums">{project.reviewTasks}</TableCell>
-                  <TableCell className="text-right tabular-nums">{project.activeTasks}</TableCell>
-                  <TableCell className="text-right tabular-nums">{project.blockedTasks}</TableCell>
-                  <TableCell className="text-right tabular-nums">{project.sessions}</TableCell>
-                  <TableCell className="text-right tabular-nums">{formatMinutes(project.runtimeMinutes)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <ul className="space-y-2">
+            {items.map((item) => (
+              <li key={item.id} className="rounded-md border border-border p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{item.title}</p>
+                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{item.detail}</p>
+                  </div>
+                  <Badge variant="outline">{statusLabel(item.status)}</Badge>
+                </div>
+              </li>
+            ))}
+          </ul>
         )}
       </CardContent>
     </Card>
   );
 }
 
-function MetricCard({
+function ReportRiskSection({
+  risks,
+}: {
+  risks: ReportSummary["humanReport"]["risksAndBlockers"];
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-sm font-medium">Risks And Blockers</CardTitle>
+          <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+        </div>
+      </CardHeader>
+      <CardContent>
+        {risks.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No risks or blockers recorded.</p>
+        ) : (
+          <ul className="space-y-2">
+            {risks.map((risk) => (
+              <li key={risk.id} className="rounded-md border border-border p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{risk.title}</p>
+                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{risk.reason}</p>
+                  </div>
+                  <Badge variant="outline">{risk.severity}</Badge>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function EvidenceAppendix({ summary }: { summary: ReportSummary }) {
+  const evidence = summary.humanReport.evidence.appendix;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <CardTitle className="text-sm font-medium">Evidence Appendix</CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Metrics and raw records kept secondary to the report narrative.
+            </p>
+          </div>
+          <FileText className="h-4 w-4 text-muted-foreground" />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <SnapshotMetric
+            label="Completion"
+            value={`${summary.metrics.completionRate}%`}
+            detail={`${summary.metrics.completedInPeriod} done of ${summary.metrics.touchedTasks} touched`}
+            icon={CheckCircle2}
+          />
+          <SnapshotMetric
+            label="Project Progress"
+            value={`${summary.metrics.projectProgressRate}%`}
+            detail={`${summary.metrics.doneTasks} done of ${summary.metrics.totalTasks} total`}
+            icon={Activity}
+          />
+          <SnapshotMetric
+            label="Sessions"
+            value={String(summary.metrics.sessions)}
+            detail={`${summary.metrics.completedSessions} completed`}
+            icon={ListChecks}
+          />
+          <SnapshotMetric
+            label="Focus Time"
+            value={formatMinutes(summary.metrics.runtimeMinutes)}
+            detail="Completed session runtime"
+            icon={Clock3}
+          />
+        </div>
+
+        <details className="rounded-md border border-border p-3">
+          <summary className="cursor-pointer text-sm font-medium">Task Evidence</summary>
+          {evidence.tasks.length === 0 ? (
+            <p className="mt-3 text-sm text-muted-foreground">No task evidence recorded.</p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {evidence.tasks.map((task) => (
+                <li key={task.id} className="rounded-md bg-muted/30 px-3 py-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">{task.title}</p>
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                        {task.description || task.failReason || `Updated ${formatDateTime(task.updatedAt)}`}
+                      </p>
+                    </div>
+                    <Badge variant="outline">{statusLabel(task.status)}</Badge>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
+
+        <details className="rounded-md border border-border p-3">
+          <summary className="cursor-pointer text-sm font-medium">Session Evidence</summary>
+          {evidence.sessions.length === 0 ? (
+            <p className="mt-3 text-sm text-muted-foreground">No session evidence recorded.</p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {evidence.sessions.map((session) => (
+                <li key={session.id} className="rounded-md bg-muted/30 px-3 py-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">{session.id}</p>
+                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                        {[formatDateTime(session.startedAt), session.runtimeMinutes == null ? null : formatMinutes(session.runtimeMinutes), session.promptPreview]
+                          .filter(Boolean)
+                          .join(" | ")}
+                      </p>
+                    </div>
+                    <Badge variant="outline">{statusLabel(session.status)}</Badge>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SnapshotMetric({
   label,
   value,
   detail,
@@ -289,124 +396,27 @@ function MetricCard({
   icon: ComponentType<{ className?: string }>;
 }) {
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
+    <div className="rounded-md border border-border bg-muted/20 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-muted-foreground">{label}</p>
         <Icon className="h-4 w-4 text-muted-foreground" />
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-semibold tabular-nums">{value}</div>
-        <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
-      </CardContent>
-    </Card>
-  );
-}
-
-function TaskSection({
-  title,
-  tasks,
-}: {
-  title: string;
-  tasks: ReportTaskItem[];
-}) {
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {tasks.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No items.</p>
-        ) : (
-          <ul className="space-y-2">
-            {tasks.map((task) => (
-              <li key={task.id} className="rounded-md border border-border p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{task.title}</p>
-                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                      {task.description || task.failReason || `Updated ${formatDateTime(task.updatedAt)}`}
-                    </p>
-                  </div>
-                  <Badge variant="outline">{statusLabel(task.status)}</Badge>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function SessionTimeline({ sessions }: { sessions: ReportSessionItem[] }) {
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between gap-3">
-          <CardTitle className="text-sm font-medium">Session Timeline</CardTitle>
-          <FileText className="h-4 w-4 text-muted-foreground" />
-        </div>
-      </CardHeader>
-      <CardContent>
-        {sessions.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No sessions recorded.</p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Session</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Started</TableHead>
-                <TableHead className="text-right">Runtime</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sessions.map((session) => (
-                <TableRow key={session.id}>
-                  <TableCell className="max-w-[420px]">
-                    <Link href={`/sessions/${session.id}`} className="font-medium hover:underline">
-                      {session.taskTitle || session.id}
-                    </Link>
-                    {session.promptPreview && (
-                      <p className="mt-1 truncate text-xs text-muted-foreground">
-                        {session.promptPreview}
-                      </p>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{statusLabel(session.status)}</Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {formatDateTime(session.startedAt)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {session.runtimeMinutes == null ? "--" : formatMinutes(session.runtimeMinutes)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
+      </div>
+      <p className="mt-2 text-xl font-semibold tabular-nums">{value}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
+    </div>
   );
 }
 
 function ReportSkeleton() {
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {[1, 2, 3, 4].map((item) => (
-          <Skeleton key={item} className="h-[132px] rounded-xl" />
-        ))}
-      </div>
-      <Skeleton className="h-[140px] rounded-xl" />
+      <Skeleton className="h-[176px] rounded-xl" />
       <div className="grid gap-4 xl:grid-cols-2">
         {[1, 2, 3, 4].map((item) => (
-          <Skeleton key={item} className="h-[220px] rounded-xl" />
+          <Skeleton key={item} className="h-[180px] rounded-xl" />
         ))}
       </div>
+      <Skeleton className="h-[260px] rounded-xl" />
     </div>
   );
 }
