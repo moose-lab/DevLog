@@ -50,6 +50,11 @@ jobs:
           # top-level summary prompt produces "No buffered inline comments"
           # and posts nothing.
           use_sticky_comment: true
+          # Without these tools the agent cannot post its review: runs end with
+          # "No buffered inline comments" + permission denials and nothing is
+          # published. Mirrors anthropics/claude-code-action's PR-review example.
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
           prompt: |
             You are reviewing a pull request in moose-lab/DevLog, a TypeScript /
             Next.js 16 / Bun developer-tools project (CLI + dashboard for Claude
