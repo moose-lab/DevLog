@@ -6,8 +6,12 @@ on:
   issue_comment:
     types: [created]
 
+# Scope the group by event_name: otherwise the tracking comment that
+# track_progress posts fires an issue_comment run that shares the group and,
+# with cancel-in-progress, kills the very pull_request run that posted it
+# (cancellation happens before the job-level `if` skip is evaluated).
 concurrency:
-  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  group: claude-review-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
