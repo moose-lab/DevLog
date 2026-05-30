@@ -137,6 +137,62 @@ test("runProviderSessionTurn fails before recording a user message when the brow
   );
 });
 
+test("runProviderSessionTurn keeps the user message when the provider returns an error", async () => {
+  const db = makeTestDb();
+  const events: ChatStreamEvent[] = [];
+
+  db.prepare(
+    `INSERT INTO sessions (
+      id, project_id, worktree_path, status, session_auth_mode,
+      local_cli_agent_id, agent_model, agent_reasoning, agent_api_protocol,
+      agent_api_version, agent_base_url, agent_max_tokens
+    ) VALUES (
+      'session-provider-error', 'test', '/repo', 'idle', 'anthropic-api-key',
+      'claude', 'gpt-4o-mini', 'default', 'openai', '', 'https://api.openai.com/v1', 16384
+    )`,
+  ).run();
+
+  const result = await runProviderSessionTurn({
+    db,
+    sessionId: "session-provider-error",
+    message: "Keep this failed request",
+    runtimeAuthInput: {
+      session_auth_mode: "anthropic-api-key",
+      agent_api_protocol: "openai",
+      agent_model: "gpt-4o-mini",
+      agent_base_url: "https://api.openai.com/v1",
+      anthropic_api_key: "sk-openai-test",
+    },
+    emit: (_sessionId, event) => events.push(event),
+    fetchImpl: async () =>
+      jsonResponse(500, {
+        error: { message: "provider unavailable" },
+      }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["status", "message", "error", "status"],
+  );
+  assert.deepEqual(
+    db
+      .prepare(
+        "SELECT role, content FROM session_messages WHERE session_id = ? ORDER BY id ASC",
+      )
+      .all("session-provider-error"),
+    [{ role: "user", content: "Keep this failed request" }],
+  );
+  assert.equal(
+    (
+      db
+        .prepare("SELECT status FROM sessions WHERE id = ?")
+        .get("session-provider-error") as { status: string }
+    ).status,
+    "failed",
+  );
+});
+
 test("runProviderSessionTurn removes the pending user message after the session is killed", async () => {
   const db = makeTestDb();
   const events: ChatStreamEvent[] = [];
