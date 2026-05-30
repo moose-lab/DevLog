@@ -91,7 +91,7 @@ export async function runProviderSessionTurn({
     return { ok: false, error: validated.error };
   }
 
-  db.prepare(
+  const insertedUser = db.prepare(
     "INSERT INTO session_messages (session_id, role, content) VALUES (?, 'user', ?)",
   ).run(sessionId, message);
   emit(sessionId, { type: "message", role: "user", content: message });
@@ -107,6 +107,9 @@ export async function runProviderSessionTurn({
   });
   const postRequestStatus = getStoredSessionStatus(db, sessionId);
   if (postRequestStatus !== "running") {
+    db.prepare(
+      "DELETE FROM session_messages WHERE id = ? AND session_id = ? AND role = 'user'",
+    ).run(insertedUser.lastInsertRowid, sessionId);
     return {
       ok: false,
       error: `Provider response ignored because the session is ${postRequestStatus ?? "missing"}.`,
