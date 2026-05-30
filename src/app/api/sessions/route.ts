@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { getDb } from "@/core/db";
 import { resolveProjectId } from "@/lib/api-utils";
-import { processManager } from "@/core/process-manager";
+import {
+  processManager,
+  validateSessionRuntimeProcessLaunch,
+} from "@/core/process-manager";
 import {
   buildAgentExecutionInstructions,
   getAgentExecutionInputFromPayload,
@@ -54,6 +57,13 @@ export async function POST(req: NextRequest) {
   );
   const runtimeAuthInput = getSessionRuntimeAuthInputFromPayload(body);
   const runtimeAuthConfig = resolveSessionRuntimeAuthConfig(runtimeAuthInput);
+  const preflight = validateSessionRuntimeProcessLaunch(
+    runtimeAuthConfig,
+    String(worktree_path),
+  );
+  if (!preflight.ok) {
+    return NextResponse.json({ error: preflight.error }, { status: 400 });
+  }
   const sessionPrompt = [
     String(prompt).trim(),
     "",
@@ -67,9 +77,11 @@ export async function POST(req: NextRequest) {
       `INSERT INTO sessions (
         id, project_id, task_id, worktree_name, worktree_path, branch_name,
         status, coding_agent_id, agent_team_id, session_auth_mode,
-        agent_api_key_env_var, agent_model, prompt
+        agent_api_key_env_var, local_cli_agent_id, agent_model,
+        agent_reasoning, agent_api_protocol, agent_api_version,
+        agent_base_url, agent_max_tokens, prompt
       )
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING *`
     )
     .get(
@@ -83,7 +95,13 @@ export async function POST(req: NextRequest) {
       agentConfig.agentTeam.id,
       runtimeAuthConfig.mode,
       runtimeAuthConfig.agentApiKeyEnvVar,
+      runtimeAuthConfig.localCliAgentId,
       runtimeAuthConfig.model,
+      runtimeAuthConfig.reasoning,
+      runtimeAuthConfig.apiProtocol,
+      runtimeAuthConfig.apiVersion,
+      runtimeAuthConfig.baseUrl,
+      runtimeAuthConfig.maxTokens,
       sessionPrompt
     ) as Session;
 

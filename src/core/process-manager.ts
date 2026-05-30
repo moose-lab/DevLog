@@ -12,10 +12,18 @@ import {
 import { onSessionExit } from "./task-lifecycle";
 import {
   buildClaudeProcessEnv,
+  DEFAULT_AGENT_MODEL,
   resolveSessionRuntimeAuthConfig,
   type SessionRuntimeAuthConfig,
   type SessionRuntimeAuthInput,
 } from "./session-runtime-auth";
+import { validateProviderRuntimeConfig } from "./api-provider-runtime";
+import { runProviderSessionTurn } from "./api-session-runtime";
+import {
+  DEFAULT_LOCAL_CLI_REASONING,
+  LOCAL_CLI_AGENT_DEFINITIONS,
+} from "./local-cli-agent-definitions";
+import { resolveExecutableOnPath } from "./local-cli-agents";
 
 export function parseClaudeBinaryPath(output: string): string | null {
   for (const rawLine of output.split("\n")) {
@@ -85,9 +93,58 @@ interface QueuedMessage {
   runtimeAuthInput?: SessionRuntimeAuthInput;
 }
 
+interface StoredSessionRuntimeRow {
+  worktree_path: string;
+  claude_session_id: string | null;
+  session_auth_mode: string | null;
+  agent_api_key_env_var: string | null;
+  local_cli_agent_id: string | null;
+  agent_model: string | null;
+  agent_reasoning: string | null;
+  agent_api_protocol: string | null;
+  agent_api_version: string | null;
+  agent_base_url: string | null;
+  agent_max_tokens: number | null;
+}
+
+type ProcessInputProtocol = "claude-stream-json" | "plain-stdin";
+type ProcessOutputProtocol =
+  | "claude-stream-json"
+  | "json-event-stream"
+  | "plain";
+type JsonEventParser =
+  | "codex"
+  | "gemini"
+  | "opencode"
+  | "cursor-agent"
+  | "copilot";
+
+interface LocalCliProcessLaunch {
+  ok: true;
+  command: string;
+  args: string[];
+  inputProtocol: ProcessInputProtocol;
+  outputProtocol: ProcessOutputProtocol;
+  eventParser?: JsonEventParser;
+  agentId: string;
+  agentName: string;
+}
+
+interface GenericStreamState {
+  buffer: string;
+  codexToolUses: Set<string>;
+  openCodeToolUses: Set<string>;
+  copilotToolNames: Map<string, string>;
+  cursorTextSoFar: string;
+}
+
 interface SessionProcess {
   proc: ChildProcess;
   sessionId: string;
+  inputProtocol: ProcessInputProtocol;
+  outputProtocol: ProcessOutputProtocol;
+  eventParser?: JsonEventParser;
+  genericStreamState: GenericStreamState;
   isProcessing: boolean;
   paused: boolean;
   lastActivityAt: number;
@@ -131,8 +188,11 @@ export function buildClaudeProcessArgs(
     "--input-format", "stream-json",
     "--output-format", "stream-json",
     "--verbose",
-    "--model", runtimeAuthConfig.model,
   ];
+
+  if (runtimeAuthConfig.model !== DEFAULT_AGENT_MODEL) {
+    args.push("--model", runtimeAuthConfig.model);
+  }
 
   if (runtimeAuthConfig.mode === "anthropic-api-key") {
     args.push("--bare");
@@ -147,9 +207,312 @@ export function buildClaudeProcessArgs(
   return args;
 }
 
+export type ResolveLocalCliBinary = (agentId: string, bin: string) => string | null;
+
+type LocalCliBinaryResolution =
+  | { ok: true; command: string | null }
+  | { ok: false; error: string };
+
+export function buildLocalCliProcessLaunch(
+  runtimeAuthConfig: SessionRuntimeAuthConfig,
+  claudeSessionId: string | null,
+  allowedTools: string[],
+  cwd: string,
+  resolveBin: ResolveLocalCliBinary = resolveLocalCliBinaryPath,
+):
+  | LocalCliProcessLaunch
+  | { ok: false; error: string } {
+  if (
+    runtimeAuthConfig.mode === "anthropic-api-key" &&
+    !runtimeAuthConfig.usesLegacyEnvVar
+  ) {
+    return {
+      ok: false,
+      error:
+        "API provider mode uses DevLog's direct provider runtime and cannot launch a Local CLI process.",
+    };
+  }
+
+  if (
+    runtimeAuthConfig.usesLegacyEnvVar ||
+    runtimeAuthConfig.localCliAgentId === "claude"
+  ) {
+    const agent = LOCAL_CLI_AGENT_DEFINITIONS.find(
+      (candidate) => candidate.id === "claude",
+    );
+    const resolved = resolveConfiguredLocalCliBinary(
+      agent,
+      runtimeAuthConfig,
+      resolveBin,
+    );
+    if (!resolved.ok) return resolved;
+    return {
+      ok: true,
+      command: resolved.command ?? claudeBin,
+      args: buildClaudeProcessArgs(
+        runtimeAuthConfig,
+        claudeSessionId,
+        allowedTools,
+      ),
+      inputProtocol: "claude-stream-json",
+      outputProtocol: "claude-stream-json",
+      agentId: "claude",
+      agentName: "Claude Code",
+    };
+  }
+
+  const agent = LOCAL_CLI_AGENT_DEFINITIONS.find(
+    (candidate) => candidate.id === runtimeAuthConfig.localCliAgentId,
+  );
+  if (!agent) {
+    return {
+      ok: false,
+      error: `Unknown local CLI agent: ${runtimeAuthConfig.localCliAgentId}`,
+    };
+  }
+
+  const resolved = resolveConfiguredLocalCliBinary(
+    agent,
+    runtimeAuthConfig,
+    resolveBin,
+  );
+  if (!resolved.ok) return resolved;
+  const command = resolved.command;
+  if (!command) {
+    return {
+      ok: false,
+      error: `Selected local CLI agent "${agent.name}" (${agent.bin}) is not installed or not on PATH. Open Settings, rescan Local CLI agents, and choose an available CLI.`,
+    };
+  }
+
+  const args = buildLocalCliAgentArgs(agent.id, runtimeAuthConfig, cwd);
+  if (!args) {
+    return {
+      ok: false,
+      error: `Selected local CLI agent "${agent.name}" is detected in the supported registry, but its DevLog runner is still pending.`,
+    };
+  }
+
+  return {
+    ok: true,
+    command,
+    args: args.args,
+    inputProtocol: "plain-stdin",
+    outputProtocol: args.outputProtocol,
+    eventParser: args.eventParser,
+    agentId: agent.id,
+    agentName: agent.name,
+  };
+}
+
+function resolveConfiguredLocalCliBinary(
+  agent: (typeof LOCAL_CLI_AGENT_DEFINITIONS)[number] | undefined,
+  runtimeAuthConfig: SessionRuntimeAuthConfig,
+  resolveBin: ResolveLocalCliBinary,
+): LocalCliBinaryResolution {
+  if (!agent) return { ok: true, command: null };
+  const configured =
+    agent.binEnvKey && runtimeAuthConfig.localCliAgentEnv[agent.binEnvKey]
+      ? runtimeAuthConfig.localCliAgentEnv[agent.binEnvKey].trim()
+      : "";
+  if (configured) {
+    if (fs.existsSync(configured)) {
+      return { ok: true, command: configured };
+    }
+    return {
+      ok: false,
+      error: `Configured ${agent.name} binary (${agent.binEnvKey}) does not exist: ${configured}. Update it in Settings or clear it to use PATH.`,
+    };
+  }
+  return { ok: true, command: resolveBin(agent.id, agent.bin) };
+}
+
+export function validateSessionRuntimeProcessLaunch(
+  runtimeAuthConfig: SessionRuntimeAuthConfig,
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+  resolveBin: ResolveLocalCliBinary = resolveLocalCliBinaryPath,
+): { ok: true } | { ok: false; error: string } {
+  if (isDirectProviderRuntime(runtimeAuthConfig)) {
+    const validated = validateProviderRuntimeConfig(runtimeAuthConfig);
+    return validated.ok ? { ok: true } : { ok: false, error: validated.error };
+  }
+
+  const launch = buildLocalCliProcessLaunch(
+    runtimeAuthConfig,
+    null,
+    ALLOWED_TOOLS,
+    cwd,
+    resolveBin,
+  );
+  if (!launch.ok) return launch;
+
+  const processEnv = buildClaudeProcessEnv(
+    { ...env, PATH: env.PATH ?? userPath },
+    runtimeAuthConfig,
+  );
+  if (!processEnv.ok) {
+    return { ok: false, error: processEnv.error };
+  }
+
+  return { ok: true };
+}
+
+function isDirectProviderRuntime(config: SessionRuntimeAuthConfig): boolean {
+  return config.mode === "anthropic-api-key" && !config.usesLegacyEnvVar;
+}
+
+function resolveLocalCliBinaryPath(agentId: string, bin: string): string | null {
+  if (agentId === "claude" && claudeBin !== "claude" && fs.existsSync(claudeBin)) {
+    return claudeBin;
+  }
+  return resolveExecutableOnPath(bin, { pathEnv: userPath });
+}
+
+function buildLocalCliAgentArgs(
+  agentId: string,
+  runtimeAuthConfig: SessionRuntimeAuthConfig,
+  cwd: string,
+): {
+  args: string[];
+  outputProtocol: ProcessOutputProtocol;
+  eventParser?: JsonEventParser;
+} | null {
+  const modelArgs =
+    runtimeAuthConfig.model !== DEFAULT_AGENT_MODEL
+      ? ["--model", runtimeAuthConfig.model]
+      : [];
+
+  switch (agentId) {
+    case "codex": {
+      const args = [
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "--full-auto",
+        "-c",
+        "sandbox_workspace_write.network_access=true",
+        "-C",
+        cwd,
+        ...modelArgs,
+      ];
+      if (runtimeAuthConfig.reasoning !== DEFAULT_LOCAL_CLI_REASONING) {
+        args.push(
+          "-c",
+          `model_reasoning_effort="${runtimeAuthConfig.reasoning}"`,
+        );
+      }
+      args.push("-");
+      return {
+        args,
+        outputProtocol: "json-event-stream",
+        eventParser: "codex",
+      };
+    }
+    case "gemini":
+      return {
+        args: [
+          "--output-format",
+          "stream-json",
+          "--skip-trust",
+          "--yolo",
+          ...modelArgs,
+        ],
+        outputProtocol: "json-event-stream",
+        eventParser: "gemini",
+      };
+    case "opencode":
+      return {
+        args: [
+          "run",
+          "--format",
+          "json",
+          "--dangerously-skip-permissions",
+          ...modelArgs,
+          "-",
+        ],
+        outputProtocol: "json-event-stream",
+        eventParser: "opencode",
+      };
+    case "cursor-agent":
+      return {
+        args: [
+          "--print",
+          "--output-format",
+          "stream-json",
+          "--stream-partial-output",
+          "--force",
+          "--trust",
+          "--workspace",
+          cwd,
+          ...modelArgs,
+        ],
+        outputProtocol: "json-event-stream",
+        eventParser: "cursor-agent",
+      };
+    case "qwen":
+      return {
+        args: ["--yolo", ...modelArgs],
+        outputProtocol: "plain",
+      };
+    case "copilot":
+      return {
+        args: [
+          "--allow-all-tools",
+          "--output-format",
+          "json",
+          ...modelArgs,
+        ],
+        outputProtocol: "json-event-stream",
+        eventParser: "copilot",
+      };
+    default:
+      return null;
+  }
+}
+
+function stringifyStreamValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function parseMaybeJson(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringifyResultContent(value: unknown): string {
+  if (isRecord(value)) {
+    if (typeof value.content === "string") return value.content;
+    if (typeof value.detailedContent === "string") return value.detailedContent;
+  }
+  return stringifyStreamValue(value);
+}
+
 class ProcessManager {
   private sessions = new Map<string, SessionProcess>();
   private messageQueues = new Map<string, QueuedMessage[]>();
+  private providerProcessing = new Set<string>();
 
   constructor() {
     const watchdog = setInterval(
@@ -287,6 +650,64 @@ class ProcessManager {
     }
   }
 
+  private getStoredSessionRuntimeRow(
+    sessionId: string,
+  ): StoredSessionRuntimeRow | null {
+    try {
+      const db = getDb();
+      const row = db
+        .prepare(
+          `SELECT
+            worktree_path,
+            claude_session_id,
+            session_auth_mode,
+            agent_api_key_env_var,
+            local_cli_agent_id,
+            agent_model,
+            agent_reasoning,
+            agent_api_protocol,
+            agent_api_version,
+            agent_base_url,
+            agent_max_tokens
+           FROM sessions
+           WHERE id = ?
+           LIMIT 1`,
+        )
+        .get(sessionId) as StoredSessionRuntimeRow | undefined;
+      return row ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private resolveRuntimeAuthConfigForSession(
+    sessionId: string,
+    runtimeAuthInput: SessionRuntimeAuthInput = {},
+  ): SessionRuntimeAuthConfig | null {
+    const session = this.getStoredSessionRuntimeRow(sessionId);
+    if (!session) return null;
+    return resolveSessionRuntimeAuthConfig({
+      session_auth_mode:
+        runtimeAuthInput.session_auth_mode ?? session.session_auth_mode,
+      agent_api_key_env_var:
+        runtimeAuthInput.agent_api_key_env_var ?? session.agent_api_key_env_var,
+      local_cli_agent_id:
+        runtimeAuthInput.local_cli_agent_id ?? session.local_cli_agent_id,
+      agent_model: runtimeAuthInput.agent_model ?? session.agent_model,
+      agent_reasoning:
+        runtimeAuthInput.agent_reasoning ?? session.agent_reasoning,
+      agent_api_protocol:
+        runtimeAuthInput.agent_api_protocol ?? session.agent_api_protocol,
+      agent_api_version:
+        runtimeAuthInput.agent_api_version ?? session.agent_api_version,
+      agent_base_url: runtimeAuthInput.agent_base_url ?? session.agent_base_url,
+      agent_max_tokens:
+        runtimeAuthInput.agent_max_tokens ?? session.agent_max_tokens,
+      anthropic_api_key: runtimeAuthInput.anthropic_api_key,
+      local_cli_agent_env: runtimeAuthInput.local_cli_agent_env,
+    });
+  }
+
   /**
    * Ensure a persistent process exists for the session.
    * Spawns `claude -p --input-format stream-json --output-format stream-json`
@@ -317,13 +738,9 @@ class ProcessManager {
     }
 
     const db = getDb();
-    const session = db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as {
-      worktree_path: string;
-      claude_session_id: string | null;
-      session_auth_mode: string | null;
-      agent_api_key_env_var: string | null;
-      agent_model: string | null;
-    } | undefined;
+    const session = db.prepare("SELECT * FROM sessions WHERE id = ?").get(
+      sessionId,
+    ) as StoredSessionRuntimeRow | undefined;
 
     if (!session) return null;
 
@@ -334,14 +751,38 @@ class ProcessManager {
         runtimeAuthInput.session_auth_mode ?? session.session_auth_mode,
       agent_api_key_env_var:
         runtimeAuthInput.agent_api_key_env_var ?? session.agent_api_key_env_var,
+      local_cli_agent_id:
+        runtimeAuthInput.local_cli_agent_id ?? session.local_cli_agent_id,
       agent_model: runtimeAuthInput.agent_model ?? session.agent_model,
+      agent_reasoning:
+        runtimeAuthInput.agent_reasoning ?? session.agent_reasoning,
+      agent_api_protocol:
+        runtimeAuthInput.agent_api_protocol ?? session.agent_api_protocol,
+      agent_api_version:
+        runtimeAuthInput.agent_api_version ?? session.agent_api_version,
+      agent_base_url: runtimeAuthInput.agent_base_url ?? session.agent_base_url,
+      agent_max_tokens:
+        runtimeAuthInput.agent_max_tokens ?? session.agent_max_tokens,
       anthropic_api_key: runtimeAuthInput.anthropic_api_key,
     });
-    const args = buildClaudeProcessArgs(
+    const launch = buildLocalCliProcessLaunch(
       runtimeAuthConfig,
       session.claude_session_id,
       ALLOWED_TOOLS,
+      session.worktree_path,
     );
+    if (!launch.ok) {
+      db.prepare(
+        "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?",
+      ).run(sessionId);
+      streamManager.emit(sessionId, {
+        type: "error",
+        message: launch.error,
+      });
+      streamManager.emit(sessionId, { type: "status", status: "failed" });
+      this.emitGlobalSystemLog("warning", sessionId, launch.error);
+      return null;
+    }
     const processEnv = buildClaudeProcessEnv(
       { ...cleanEnv, PATH: userPath },
       runtimeAuthConfig,
@@ -360,7 +801,7 @@ class ProcessManager {
     }
     const env = processEnv.env;
 
-    const proc = spawn(claudeBin, args, {
+    const proc = spawn(launch.command, launch.args, {
       cwd: session.worktree_path,
       env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -369,6 +810,16 @@ class ProcessManager {
     const sp: SessionProcess = {
       proc,
       sessionId,
+      inputProtocol: launch.inputProtocol,
+      outputProtocol: launch.outputProtocol,
+      eventParser: launch.eventParser,
+      genericStreamState: {
+        buffer: "",
+        codexToolUses: new Set(),
+        openCodeToolUses: new Set(),
+        copilotToolNames: new Map(),
+        cursorTextSoFar: "",
+      },
       isProcessing: false,
       paused: false,
       lastActivityAt: Date.now(),
@@ -382,12 +833,12 @@ class ProcessManager {
     this.emitGlobalSystemLog(
       "info",
       sessionId,
-      `Session ${sessionId.slice(0, 8)} process started`
+      `Session ${sessionId.slice(0, 8)} process started with ${launch.agentName}`
     );
 
     proc.on("error", (err) => {
       this.sessions.delete(sessionId);
-      const message = `Failed to start Claude process: ${err.message}`;
+      const message = `Failed to start ${launch.agentName} process: ${err.message}`;
       try {
         db.prepare(
           "UPDATE sessions SET status = 'failed', pid = NULL, ended_at = datetime('now') WHERE id = ?",
@@ -400,23 +851,38 @@ class ProcessManager {
       this.emitGlobalSystemLog("warning", sessionId, message);
     });
 
+    proc.stdin?.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code !== "EPIPE") {
+        streamManager.emit(sessionId, {
+          type: "error",
+          message: `Agent stdin error: ${err.message}`,
+        });
+      }
+    });
+
     // Update session status
     db.prepare(
       "UPDATE sessions SET status = 'running', pid = ? WHERE id = ?"
     ).run(proc.pid, sessionId);
     streamManager.emit(sessionId, { type: "status", status: "running" });
 
-    // Parse stdout as JSONL
+    // Parse stdout according to the selected local CLI protocol.
     if (proc.stdout) {
-      const rl = readline.createInterface({ input: proc.stdout });
-      rl.on("line", (line) => {
-        try {
-          const event = JSON.parse(line);
-          this.handleStreamEvent(sessionId, sp, event);
-        } catch {
-          // ignore unparseable lines
-        }
-      });
+      if (launch.outputProtocol === "claude-stream-json") {
+        const rl = readline.createInterface({ input: proc.stdout });
+        rl.on("line", (line) => {
+          try {
+            const event = JSON.parse(line);
+            this.handleStreamEvent(sessionId, sp, event);
+          } catch {
+            // ignore unparseable lines
+          }
+        });
+      } else {
+        proc.stdout.on("data", (chunk: Buffer) => {
+          this.handleGenericOutputChunk(sessionId, sp, chunk.toString());
+        });
+      }
     }
 
     // Capture stderr for debugging
@@ -437,8 +903,9 @@ class ProcessManager {
       });
     }
 
-    // Handle process exit
-    proc.on("exit", (code) => {
+    // Handle process close after stdout/stderr have flushed.
+    proc.on("close", (code) => {
+      this.flushGenericOutput(sessionId, sp);
       this.sessions.delete(sessionId);
       this.emitGlobalSystemLog(
         code === 0 ? "success" : "warning",
@@ -509,6 +976,23 @@ class ProcessManager {
     message: string,
     runtimeAuthInput?: SessionRuntimeAuthInput,
   ): Promise<void> {
+    const runtimeAuthConfig = this.resolveRuntimeAuthConfigForSession(
+      sessionId,
+      runtimeAuthInput,
+    );
+    if (!runtimeAuthConfig) {
+      streamManager.emit(sessionId, {
+        type: "error",
+        message: "Session not found",
+      });
+      return;
+    }
+
+    if (isDirectProviderRuntime(runtimeAuthConfig)) {
+      await this.sendProviderMessage(sessionId, message, runtimeAuthInput);
+      return;
+    }
+
     const sp = this.ensureProcess(sessionId, runtimeAuthInput);
     if (!sp) {
       if (!this.sessionExists(sessionId)) {
@@ -539,8 +1023,67 @@ class ProcessManager {
     this.writeMessage(sp, message);
   }
 
+  private async sendProviderMessage(
+    sessionId: string,
+    message: string,
+    runtimeAuthInput?: SessionRuntimeAuthInput,
+  ): Promise<void> {
+    if (this.providerProcessing.has(sessionId)) {
+      if (!this.messageQueues.has(sessionId)) {
+        this.messageQueues.set(sessionId, []);
+      }
+      const queue = this.messageQueues.get(sessionId)!;
+      queue.push({ message, runtimeAuthInput });
+      streamManager.emit(sessionId, {
+        type: "message_queued",
+        content: message,
+        position: queue.length,
+      });
+      return;
+    }
+
+    this.providerProcessing.add(sessionId);
+    let ok = false;
+    try {
+      const result = await runProviderSessionTurn({
+        db: getDb(),
+        sessionId,
+        message,
+        runtimeAuthInput,
+        emit: (targetSessionId, event) =>
+          streamManager.emit(targetSessionId, event),
+      });
+      ok = result.ok;
+      if (!result.ok) {
+        this.emitGlobalSystemLog("warning", sessionId, result.error);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Provider session failed.";
+      try {
+        getDb()
+          .prepare(
+            "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?",
+          )
+          .run(sessionId);
+      } catch {
+        // ignore
+      }
+      streamManager.emit(sessionId, { type: "error", message });
+      streamManager.emit(sessionId, { type: "status", status: "failed" });
+      this.emitGlobalSystemLog("warning", sessionId, message);
+    } finally {
+      this.providerProcessing.delete(sessionId);
+      if (ok) {
+        setTimeout(() => this.processQueue(sessionId), 200);
+      } else {
+        this.messageQueues.delete(sessionId);
+      }
+    }
+  }
+
   /**
-   * Write a message directly to the process stdin as stream-json.
+   * Write a message directly to the selected local CLI process.
    */
   private writeMessage(sp: SessionProcess, message: string): void {
     const db = getDb();
@@ -563,6 +1106,23 @@ class ProcessManager {
     sp.toolCalls = [];
 
     streamManager.emit(sp.sessionId, { type: "status", status: "running" });
+
+    if (sp.inputProtocol === "plain-stdin") {
+      try {
+        if (!sp.proc.stdin || sp.proc.killed) {
+          throw new Error("Process stdin unavailable");
+        }
+        sp.proc.stdin.end(message, "utf8");
+      } catch (err) {
+        sp.isProcessing = false;
+        streamManager.emit(sp.sessionId, {
+          type: "error",
+          message: `Failed to send message: ${err instanceof Error ? err.message : String(err)}`,
+        });
+        streamManager.emit(sp.sessionId, { type: "status", status: "idle" });
+      }
+      return;
+    }
 
     // Write to stdin in stream-json format
     const inputMsg = JSON.stringify({
@@ -593,6 +1153,7 @@ class ProcessManager {
   private processQueue(sessionId: string): void {
     const queue = this.messageQueues.get(sessionId);
     if (!queue || queue.length === 0) return;
+    if (this.providerProcessing.has(sessionId)) return;
 
     const sp = this.sessions.get(sessionId);
     if (sp && sp.isProcessing) return; // Still processing, wait
@@ -603,6 +1164,26 @@ class ProcessManager {
       type: "queue_drained",
       remaining: queue.length,
     });
+
+    const runtimeAuthConfig = this.resolveRuntimeAuthConfigForSession(
+      sessionId,
+      nextMessage.runtimeAuthInput,
+    );
+    if (!runtimeAuthConfig) {
+      streamManager.emit(sessionId, {
+        type: "error",
+        message: "Session not found",
+      });
+      return;
+    }
+    if (isDirectProviderRuntime(runtimeAuthConfig)) {
+      void this.sendProviderMessage(
+        sessionId,
+        nextMessage.message,
+        nextMessage.runtimeAuthInput,
+      );
+      return;
+    }
 
     // If we still have a process, write directly. Otherwise, ensureProcess + write.
     if (sp && !sp.proc.killed) {
@@ -656,6 +1237,295 @@ class ProcessManager {
       type: "permission_resolved",
       request_id: requestId,
       approved,
+    });
+  }
+
+  private handleGenericOutputChunk(
+    sessionId: string,
+    sp: SessionProcess,
+    chunk: string,
+  ): void {
+    sp.lastActivityAt = Date.now();
+    if (sp.outputProtocol === "plain") {
+      this.emitTextDelta(sessionId, sp, chunk);
+      return;
+    }
+
+    sp.genericStreamState.buffer += chunk;
+    let newlineIndex = sp.genericStreamState.buffer.indexOf("\n");
+    while (newlineIndex !== -1) {
+      const line = sp.genericStreamState.buffer.slice(0, newlineIndex).trim();
+      sp.genericStreamState.buffer =
+        sp.genericStreamState.buffer.slice(newlineIndex + 1);
+      if (line) {
+        this.handleGenericJsonLine(sessionId, sp, line);
+      }
+      newlineIndex = sp.genericStreamState.buffer.indexOf("\n");
+    }
+  }
+
+  private flushGenericOutput(sessionId: string, sp: SessionProcess): void {
+    if (sp.outputProtocol !== "json-event-stream") return;
+    const line = sp.genericStreamState.buffer.trim();
+    sp.genericStreamState.buffer = "";
+    if (line) {
+      this.handleGenericJsonLine(sessionId, sp, line);
+    }
+  }
+
+  private handleGenericJsonLine(
+    sessionId: string,
+    sp: SessionProcess,
+    line: string,
+  ): void {
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      this.emitTextDelta(sessionId, sp, `${line}\n`);
+      return;
+    }
+
+    switch (sp.eventParser) {
+      case "codex":
+        if (this.handleCodexEvent(sessionId, sp, event)) return;
+        break;
+      case "gemini":
+        if (this.handleGeminiEvent(sessionId, sp, event)) return;
+        break;
+      case "opencode":
+        if (this.handleOpenCodeEvent(sessionId, sp, event)) return;
+        break;
+      case "cursor-agent":
+        if (this.handleCursorEvent(sessionId, sp, event)) return;
+        break;
+      case "copilot":
+        if (this.handleCopilotEvent(sessionId, sp, event)) return;
+        break;
+    }
+  }
+
+  private handleCodexEvent(
+    sessionId: string,
+    sp: SessionProcess,
+    event: Record<string, unknown>,
+  ): boolean {
+    const type = event.type;
+    const item = event.item as Record<string, unknown> | undefined;
+
+    if (
+      type === "item.started" &&
+      item?.type === "command_execution" &&
+      typeof item.id === "string"
+    ) {
+      if (!sp.genericStreamState.codexToolUses.has(item.id)) {
+        sp.genericStreamState.codexToolUses.add(item.id);
+        streamManager.emit(sessionId, {
+          type: "tool_start",
+          name: "Bash",
+          input: {
+            command: typeof item.command === "string" ? item.command : "",
+          },
+        });
+      }
+      return true;
+    }
+
+    if (
+      type === "item.completed" &&
+      item?.type === "command_execution" &&
+      typeof item.id === "string"
+    ) {
+      if (!sp.genericStreamState.codexToolUses.has(item.id)) {
+        sp.genericStreamState.codexToolUses.add(item.id);
+        streamManager.emit(sessionId, {
+          type: "tool_start",
+          name: "Bash",
+          input: {
+            command: typeof item.command === "string" ? item.command : "",
+          },
+        });
+      }
+      streamManager.emit(sessionId, {
+        type: "tool_result",
+        name: "Bash",
+        output: stringifyStreamValue(item.aggregated_output ?? ""),
+        is_error:
+          typeof item.exit_code === "number"
+            ? item.exit_code !== 0
+            : item.status === "failed",
+      });
+      return true;
+    }
+
+    if (
+      type === "item.completed" &&
+      item?.type === "agent_message" &&
+      typeof item.text === "string"
+    ) {
+      this.emitTextDelta(sessionId, sp, item.text);
+      return true;
+    }
+
+    return (
+      type === "thread.started" ||
+      type === "turn.started" ||
+      type === "turn.completed"
+    );
+  }
+
+  private handleGeminiEvent(
+    sessionId: string,
+    sp: SessionProcess,
+    event: Record<string, unknown>,
+  ): boolean {
+    if (
+      event.type === "message" &&
+      event.role === "assistant" &&
+      typeof event.content === "string"
+    ) {
+      this.emitTextDelta(sessionId, sp, event.content);
+      return true;
+    }
+    return event.type === "init" || event.type === "result";
+  }
+
+  private handleOpenCodeEvent(
+    sessionId: string,
+    sp: SessionProcess,
+    event: Record<string, unknown>,
+  ): boolean {
+    const part = event.part as Record<string, unknown> | undefined;
+    if (
+      event.type === "text" &&
+      part &&
+      typeof part.text === "string"
+    ) {
+      this.emitTextDelta(sessionId, sp, part.text);
+      return true;
+    }
+
+    if (
+      event.type === "tool_use" &&
+      part &&
+      typeof part.tool === "string" &&
+      typeof part.callID === "string"
+    ) {
+      const key = `${event.sessionID ?? "session"}:${part.callID}`;
+      const statePart = part.state as Record<string, unknown> | undefined;
+      if (!sp.genericStreamState.openCodeToolUses.has(key)) {
+        sp.genericStreamState.openCodeToolUses.add(key);
+        streamManager.emit(sessionId, {
+          type: "tool_start",
+          name: part.tool,
+          input: parseMaybeJson(statePart?.input),
+        });
+      }
+      if (statePart?.status === "completed") {
+        streamManager.emit(sessionId, {
+          type: "tool_result",
+          name: part.tool,
+          output: stringifyStreamValue(statePart.output),
+          is_error: false,
+        });
+      }
+      return true;
+    }
+
+    return event.type === "step_start" || event.type === "step_finish";
+  }
+
+  private handleCursorEvent(
+    sessionId: string,
+    sp: SessionProcess,
+    event: Record<string, unknown>,
+  ): boolean {
+    if (event.type === "assistant") {
+      const message = event.message as { content?: unknown } | undefined;
+      const blocks = Array.isArray(message?.content) ? message.content : [];
+      const text = blocks
+        .map((block) =>
+          block &&
+          typeof block === "object" &&
+          (block as { type?: unknown }).type === "text" &&
+          typeof (block as { text?: unknown }).text === "string"
+            ? String((block as { text: string }).text)
+            : "",
+        )
+        .join("");
+      if (!text) return false;
+      const previous = sp.genericStreamState.cursorTextSoFar;
+      if (text === previous) return true;
+      const delta = text.startsWith(previous) ? text.slice(previous.length) : text;
+      sp.genericStreamState.cursorTextSoFar = text;
+      this.emitTextDelta(sessionId, sp, delta);
+      return true;
+    }
+    return event.type === "system" || event.type === "result";
+  }
+
+  private handleCopilotEvent(
+    sessionId: string,
+    sp: SessionProcess,
+    event: Record<string, unknown>,
+  ): boolean {
+    const data = isRecord(event.data) ? event.data : {};
+    switch (event.type) {
+      case "session.tools_updated":
+      case "assistant.turn_start":
+      case "assistant.reasoning_delta":
+        return true;
+      case "assistant.message_delta":
+        if (typeof data.deltaContent === "string") {
+          this.emitTextDelta(sessionId, sp, data.deltaContent);
+          return true;
+        }
+        return false;
+      case "tool.execution_start": {
+        const toolCallId =
+          typeof data.toolCallId === "string" ? data.toolCallId : randomUUID();
+        const name =
+          typeof data.toolName === "string" && data.toolName.length > 0
+            ? data.toolName
+            : "Tool";
+        sp.genericStreamState.copilotToolNames.set(toolCallId, name);
+        streamManager.emit(sessionId, {
+          type: "tool_start",
+          name,
+          input: parseMaybeJson(data.arguments),
+        });
+        return true;
+      }
+      case "tool.execution_complete": {
+        const toolCallId =
+          typeof data.toolCallId === "string" ? data.toolCallId : "";
+        streamManager.emit(sessionId, {
+          type: "tool_result",
+          name:
+            sp.genericStreamState.copilotToolNames.get(toolCallId) ?? "Tool",
+          output: stringifyResultContent(data.result),
+          is_error: data.success === false,
+        });
+        return true;
+      }
+      case "result":
+      case "user.message":
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private emitTextDelta(
+    sessionId: string,
+    sp: SessionProcess,
+    text: string,
+  ): void {
+    if (!text) return;
+    sp.textBuffer += text;
+    streamManager.emit(sessionId, {
+      type: "text_delta",
+      text,
     });
   }
 
