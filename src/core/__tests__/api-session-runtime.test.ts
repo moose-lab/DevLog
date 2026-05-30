@@ -87,7 +87,7 @@ test("runProviderSessionTurn executes API mode without a Local CLI process", asy
   );
   assert.deepEqual(
     events.map((event) => event.type),
-    ["message", "status", "text_delta", "message", "turn_end", "status"],
+    ["status", "message", "text_delta", "message", "turn_end", "status"],
   );
 });
 
@@ -193,6 +193,6 @@ test("runProviderSessionTurn removes the pending user message after the session 
   );
   assert.deepEqual(
     events.map((event) => event.type),
-    ["message", "status"],
+    ["status"],
   );
 });
