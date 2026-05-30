@@ -6,6 +6,15 @@ import {
   DEFAULT_AGENT_MODEL,
   DEFAULT_SESSION_AUTH_MODE,
 } from "./session-runtime-auth";
+import {
+  DEFAULT_API_BASE_URL,
+  DEFAULT_API_MAX_TOKENS,
+  DEFAULT_API_PROTOCOL,
+} from "./agent-settings";
+import {
+  DEFAULT_LOCAL_CLI_AGENT_ID,
+  DEFAULT_LOCAL_CLI_REASONING,
+} from "./local-cli-agent-definitions";
 
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -42,7 +51,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   agent_team_id TEXT NOT NULL DEFAULT '${DEFAULT_AGENT_TEAM_ID}',
   session_auth_mode TEXT NOT NULL DEFAULT '${DEFAULT_SESSION_AUTH_MODE}',
   agent_api_key_env_var TEXT,
+  local_cli_agent_id TEXT NOT NULL DEFAULT '${DEFAULT_LOCAL_CLI_AGENT_ID}',
   agent_model TEXT NOT NULL DEFAULT '${DEFAULT_AGENT_MODEL}',
+  agent_reasoning TEXT NOT NULL DEFAULT '${DEFAULT_LOCAL_CLI_REASONING}',
+  agent_api_protocol TEXT NOT NULL DEFAULT '${DEFAULT_API_PROTOCOL}',
+  agent_api_version TEXT NOT NULL DEFAULT '',
+  agent_base_url TEXT NOT NULL DEFAULT '${DEFAULT_API_BASE_URL}',
+  agent_max_tokens INTEGER NOT NULL DEFAULT ${DEFAULT_API_MAX_TOKENS},
   prompt TEXT,
   exit_code INTEGER,
   log_path TEXT,

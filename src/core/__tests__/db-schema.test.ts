@@ -43,21 +43,33 @@ test("sessions store agent execution and runtime auth defaults", () => {
 
   const row = db
     .prepare(
-      "SELECT coding_agent_id, agent_team_id, session_auth_mode, agent_api_key_env_var, agent_model FROM sessions WHERE id = ?",
+      "SELECT coding_agent_id, agent_team_id, session_auth_mode, agent_api_key_env_var, local_cli_agent_id, agent_model, agent_reasoning, agent_api_protocol, agent_api_version, agent_base_url, agent_max_tokens FROM sessions WHERE id = ?",
     )
     .get(sessionId) as {
     coding_agent_id: string;
     agent_team_id: string;
     session_auth_mode: string;
     agent_api_key_env_var: string | null;
+    local_cli_agent_id: string;
     agent_model: string;
+    agent_reasoning: string;
+    agent_api_protocol: string;
+    agent_api_version: string;
+    agent_base_url: string;
+    agent_max_tokens: number;
   };
 
   assert.equal(row.coding_agent_id, "general-coding-agent");
   assert.equal(row.agent_team_id, "implementation-review-team");
   assert.equal(row.session_auth_mode, "local-cli");
   assert.equal(row.agent_api_key_env_var, null);
-  assert.equal(row.agent_model, "claude-sonnet-4-6");
+  assert.equal(row.local_cli_agent_id, "claude");
+  assert.equal(row.agent_model, "default");
+  assert.equal(row.agent_reasoning, "default");
+  assert.equal(row.agent_api_protocol, "anthropic");
+  assert.equal(row.agent_api_version, "");
+  assert.equal(row.agent_base_url, "https://api.anthropic.com");
+  assert.equal(row.agent_max_tokens, 8192);
 });
 
 test("migrateTasksV2 preserves data and adds new columns on legacy DB", () => {
