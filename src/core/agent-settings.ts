@@ -563,6 +563,7 @@ export function getBrowserApiKeyScope(
 ): string {
   const apiProtocol = sanitizeApiProtocol(settings.apiProtocol);
   const apiBaseUrl = sanitizeApiBaseUrl(settings.apiBaseUrl, apiProtocol);
+  // Use a delimiter that cannot appear in sanitized protocol names or URLs.
   return `${apiProtocol}\n${apiBaseUrl}`;
 }
 

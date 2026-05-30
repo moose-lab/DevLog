@@ -217,3 +217,25 @@ test("fetchProviderModels redacts provider errors", async () => {
   assert.equal(result.kind, "auth_failed");
   assert.equal(result.detail, "invalid key [redacted]");
 });
+
+test("fetchProviderModels classifies 403 provider responses as forbidden", async () => {
+  const result = await fetchProviderModels(
+    resolveSessionRuntimeAuthConfig({
+      session_auth_mode: "anthropic-api-key",
+      agent_api_protocol: "openai",
+      agent_model: "restricted-model",
+      agent_base_url: "https://api.openai.com/v1",
+      anthropic_api_key: "sk-openai-secret",
+    }),
+    {
+      fetchImpl: async () =>
+        jsonResponse(403, {
+          error: { message: "model list is not enabled for this account" },
+        }),
+    },
+  );
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.kind, "forbidden");
+});

@@ -69,6 +69,36 @@ function parseIpv4(hostname: string): [number, number, number, number] | null {
   return parsed as [number, number, number, number];
 }
 
+function parseIpv4MappedIpv6(
+  hostname: string,
+): [number, number, number, number] | null {
+  const mappedPrefixes = ["::ffff:", "0:0:0:0:0:ffff:"];
+  const prefix = mappedPrefixes.find((candidate) =>
+    hostname.startsWith(candidate),
+  );
+  if (!prefix) return null;
+
+  const suffix = hostname.slice(prefix.length);
+  const dotted = parseIpv4(suffix);
+  if (dotted) return dotted;
+
+  const parts = suffix.split(":");
+  if (parts.length !== 2) return null;
+  const words = parts.map((part) => {
+    if (!/^[0-9a-f]{1,4}$/i.test(part)) return null;
+    return Number.parseInt(part, 16);
+  });
+  if (words.some((word) => word === null)) return null;
+  const [high, low] = words as [number, number];
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff];
+}
+
+function parseIpv6FirstGroup(hostname: string): number | null {
+  const firstGroup = hostname.split(":", 1)[0];
+  if (!/^[0-9a-f]{1,4}$/i.test(firstGroup)) return null;
+  return Number.parseInt(firstGroup, 16);
+}
+
 function normalizeHost(hostname: string): string {
   const stripped = hostname.startsWith("[") && hostname.endsWith("]")
     ? hostname.slice(1, -1)
@@ -80,12 +110,15 @@ export function isLoopbackHost(hostname: string): boolean {
   const host = normalizeHost(hostname);
   if (host === "localhost" || host === "::1") return true;
   const ipv4 = parseIpv4(host);
-  return Boolean(ipv4 && ipv4[0] === 127);
+  const mappedIpv4 = parseIpv4MappedIpv6(host);
+  return Boolean(
+    (ipv4 && ipv4[0] === 127) || (mappedIpv4 && mappedIpv4[0] === 127),
+  );
 }
 
 function isBlockedExternalHost(hostname: string): boolean {
   const host = normalizeHost(hostname);
-  const ipv4 = parseIpv4(host);
+  const ipv4 = parseIpv4(host) ?? parseIpv4MappedIpv6(host);
   if (ipv4) {
     const [a, b] = ipv4;
     return (
@@ -98,7 +131,13 @@ function isBlockedExternalHost(hostname: string): boolean {
       a >= 224
     );
   }
-  return host === "::" || /^f[cd][0-9a-f]{2}:/i.test(host) || /^fe[89ab][0-9a-f]:/i.test(host);
+  const firstGroup = parseIpv6FirstGroup(host);
+  return (
+    host === "::" ||
+    (firstGroup !== null &&
+      ((firstGroup & 0xfe00) === 0xfc00 ||
+        (firstGroup & 0xffc0) === 0xfe80))
+  );
 }
 
 export function validateAgentConnectionBaseUrl(baseUrl: string): ParsedBaseUrl {
@@ -359,7 +398,7 @@ function appendVersionedApiPath(baseUrl: URL, suffix: string): string {
   const url = new URL(baseUrl.toString());
   const basePath = url.pathname.replace(/\/+$/, "");
   const normalizedSuffix = suffix.startsWith("/") ? suffix : `/${suffix}`;
-  url.pathname = basePath.endsWith("/v1")
+  url.pathname = /\/v\d+(?:beta)?$/.test(basePath)
     ? `${basePath}${normalizedSuffix}`
     : `${basePath}/v1${normalizedSuffix}`;
   return url.toString();
@@ -478,7 +517,8 @@ function classifyProviderFailure(
   status: number,
   detail: string | undefined,
 ): ProviderRuntimeFailureKind {
-  if (status === 401 || status === 403) return "auth_failed";
+  if (status === 401) return "auth_failed";
+  if (status === 403) return "forbidden";
   if (status === 429) return "rate_limited";
   if (status >= 500) return "upstream_unavailable";
   if (status === 404) return "not_found_model";
