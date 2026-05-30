@@ -33,20 +33,9 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Test
-        # TZ is pinned to Asia/Shanghai because cost-tracker.test.ts uses
+      - name: Quality gate
+        # quality:ci pins TZ for tests because cost-tracker.test.ts uses
         # +08:00 timestamps and aggregateCostReport bucket boundaries are
         # computed via dayjs(...).startOf("day"), which is system-TZ-coupled.
         # TODO: make aggregateCostReport TZ-agnostic and drop this pin.
-        env:
-          TZ: Asia/Shanghai
-        run: bun run test
-
-      - name: Build (Next.js)
-        run: bun run build
-
-      - name: Build (CLI)
-        run: bun run build:cli
+        run: bun run quality:ci

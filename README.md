@@ -129,9 +129,20 @@ bun run dev
 # Run tests
 bun run test
 
+# Run the pre-commit quality gate
+bun run quality:precommit
+
+# Run the full CI quality gate
+bun run quality:ci
+
 # Run CLI locally
 bun dist/cli.js --help
 ```
+
+`bun install` installs Husky hooks through the `prepare` script. The pre-commit
+hook runs `bun run quality:precommit` to check staged whitespace, TypeScript, and
+tests before code is committed. CI runs `bun run quality:ci`, which adds the
+production dashboard and CLI builds.
 
 ---
 
