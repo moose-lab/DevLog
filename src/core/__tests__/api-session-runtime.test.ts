@@ -137,7 +137,7 @@ test("runProviderSessionTurn fails before recording a user message when the brow
   );
 });
 
-test("runProviderSessionTurn does not save provider output after the session is killed", async () => {
+test("runProviderSessionTurn removes the pending user message after the session is killed", async () => {
   const db = makeTestDb();
   const events: ChatStreamEvent[] = [];
 
@@ -181,7 +181,7 @@ test("runProviderSessionTurn does not save provider output after the session is 
         "SELECT role, content FROM session_messages WHERE session_id = ? ORDER BY id ASC",
       )
       .all("session-killed"),
-    [{ role: "user", content: "Stop before output" }],
+    [],
   );
   assert.equal(
     (

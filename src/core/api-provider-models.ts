@@ -182,7 +182,7 @@ function appendVersionedApiPath(
   const url = new URL(baseUrl.toString());
   const basePath = url.pathname.replace(/\/+$/, "");
   const normalizedSuffix = suffix.startsWith("/") ? suffix : `/${suffix}`;
-  url.pathname = basePath.endsWith(`/${version}`)
+  url.pathname = /\/v\d+(?:beta)?$/.test(basePath)
     ? `${basePath}${normalizedSuffix}`
     : `${basePath}/${version}${normalizedSuffix}`;
   return url.toString();
@@ -260,7 +260,8 @@ function classifyProviderFailure(
   status: number,
   detail: string | undefined,
 ): ProviderRuntimeFailureKind {
-  if (status === 401 || status === 403) return "auth_failed";
+  if (status === 401) return "auth_failed";
+  if (status === 403) return "forbidden";
   if (status === 429) return "rate_limited";
   if (status >= 500) return "upstream_unavailable";
   if (status === 404) return "not_found_model";
