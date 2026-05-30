@@ -94,7 +94,6 @@ export async function runProviderSessionTurn({
   const insertedUser = db.prepare(
     "INSERT INTO session_messages (session_id, role, content) VALUES (?, 'user', ?)",
   ).run(sessionId, message);
-  emit(sessionId, { type: "message", role: "user", content: message });
 
   db.prepare("UPDATE sessions SET status = 'running' WHERE id = ?").run(
     sessionId,
@@ -115,6 +114,8 @@ export async function runProviderSessionTurn({
       error: `Provider response ignored because the session is ${postRequestStatus ?? "missing"}.`,
     };
   }
+
+  emit(sessionId, { type: "message", role: "user", content: message });
 
   if (!result.ok) {
     db.prepare(
