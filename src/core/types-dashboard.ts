@@ -1,5 +1,12 @@
 export type TaskStatus = "todo" | "in_queue" | "in_progress" | "review" | "blocked" | "fail" | "done";
 export type TaskPriority = "low" | "medium" | "high" | "critical";
+export type SessionApiProtocol =
+  | "anthropic"
+  | "openai"
+  | "azure"
+  | "google"
+  | "ollama"
+  | "senseaudio";
 
 export interface Task {
   id: string;
@@ -48,7 +55,13 @@ export interface Session {
     | "backend-oauth"
     | "agent-api-key";
   agent_api_key_env_var: string | null;
+  local_cli_agent_id: string;
   agent_model: string;
+  agent_reasoning: string;
+  agent_api_protocol: SessionApiProtocol;
+  agent_api_version: string;
+  agent_base_url: string;
+  agent_max_tokens: number;
   prompt: string | null;
   exit_code: number | null;
   log_path: string | null;

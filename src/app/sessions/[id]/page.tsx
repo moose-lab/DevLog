@@ -108,7 +108,13 @@ export default function SessionDetailPage() {
               agentTeamId={session.agent_team_id}
               sessionAuthMode={session.session_auth_mode}
               agentApiKeyEnvVar={session.agent_api_key_env_var}
+              localCliAgentId={session.local_cli_agent_id}
               agentModel={session.agent_model}
+              agentReasoning={session.agent_reasoning}
+              agentApiProtocol={session.agent_api_protocol}
+              agentApiVersion={session.agent_api_version}
+              agentBaseUrl={session.agent_base_url}
+              agentMaxTokens={session.agent_max_tokens}
             />
           </div>
         </div>

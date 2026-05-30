@@ -4,7 +4,10 @@ import { getDb } from "@/core/db";
 import { resolveProjectId } from "@/lib/api-utils";
 import { getProject } from "@/core/project-adapter";
 import { createWorktree, listWorktrees } from "@/core/worktree-manager";
-import { processManager } from "@/core/process-manager";
+import {
+  processManager,
+  validateSessionRuntimeProcessLaunch,
+} from "@/core/process-manager";
 import { fileWatcher } from "@/core/file-watcher";
 import { hasTaskPrompt } from "@/core/task-readiness";
 import { slugify, buildPromptTemplate } from "@/core/task-lifecycle";
@@ -60,6 +63,13 @@ export async function POST(
 
   // 2. Create worktree
   const project = getProject(projectId);
+  const preflight = validateSessionRuntimeProcessLaunch(
+    runtimeAuthConfig,
+    project.path,
+  );
+  if (!preflight.ok) {
+    return NextResponse.json({ error: preflight.error }, { status: 400 });
+  }
   const slug = slugify(task.title);
   const worktreeName = `task-${slug}`;
   const branchName = `task/${taskId.slice(0, 8)}-${slug}`;
@@ -108,9 +118,11 @@ export async function POST(
       `INSERT INTO sessions (
         id, project_id, task_id, worktree_name, worktree_path, branch_name,
         status, coding_agent_id, agent_team_id, session_auth_mode,
-        agent_api_key_env_var, agent_model, prompt
+        agent_api_key_env_var, local_cli_agent_id, agent_model,
+        agent_reasoning, agent_api_protocol, agent_api_version,
+        agent_base_url, agent_max_tokens, prompt
       )
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING *`
     )
     .get(
@@ -124,7 +136,13 @@ export async function POST(
       agentConfig.agentTeam.id,
       runtimeAuthConfig.mode,
       runtimeAuthConfig.agentApiKeyEnvVar,
+      runtimeAuthConfig.localCliAgentId,
       runtimeAuthConfig.model,
+      runtimeAuthConfig.reasoning,
+      runtimeAuthConfig.apiProtocol,
+      runtimeAuthConfig.apiVersion,
+      runtimeAuthConfig.baseUrl,
+      runtimeAuthConfig.maxTokens,
       prompt
     ) as Session;
 

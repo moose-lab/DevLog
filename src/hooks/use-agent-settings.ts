@@ -6,11 +6,34 @@ import {
   DEFAULT_AGENT_SETTINGS,
   buildSessionRuntimePayload,
   buildStoredAgentSettings,
+  getScopedBrowserApiKey,
   normalizeAgentSettings,
+  setScopedBrowserApiKey,
   type AgentSettings,
+  type BrowserApiKeyScopes,
 } from "@/core/agent-settings";
 
-let browserOnlyAnthropicApiKey = "";
+let browserOnlyApiKeysByScope: BrowserApiKeyScopes = {};
+
+function isLoopbackApiBaseUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return (
+      hostname === "localhost" ||
+      hostname === "::1" ||
+      hostname.startsWith("127.")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isApiKeyRequired(settings: AgentSettings): boolean {
+  return !(
+    settings.apiProtocol === "ollama" &&
+    isLoopbackApiBaseUrl(settings.apiBaseUrl)
+  );
+}
 
 function readStoredSettings(): AgentSettings {
   if (typeof window === "undefined") {
@@ -23,12 +46,19 @@ function readStoredSettings(): AgentSettings {
     writeStoredSettings(persisted);
     return {
       ...persisted,
-      anthropicApiKey: browserOnlyAnthropicApiKey,
+      anthropicApiKey: getScopedBrowserApiKey(
+        persisted,
+        browserOnlyApiKeysByScope,
+      ),
     };
   } catch {
+    const fallback = { ...DEFAULT_AGENT_SETTINGS };
     return {
-      ...DEFAULT_AGENT_SETTINGS,
-      anthropicApiKey: browserOnlyAnthropicApiKey,
+      ...fallback,
+      anthropicApiKey: getScopedBrowserApiKey(
+        fallback,
+        browserOnlyApiKeysByScope,
+      ),
     };
   }
 }
@@ -55,13 +85,24 @@ export function useAgentSettings() {
 
   const setSettings = useCallback((patch: Partial<AgentSettings>) => {
     setSettingsState((current) => {
-      if (typeof patch.anthropicApiKey === "string") {
-        browserOnlyAnthropicApiKey = patch.anthropicApiKey;
-      }
-      const next = normalizeAgentSettings({
+      const scopedSettings = normalizeAgentSettings({
         ...current,
         ...patch,
-        anthropicApiKey: browserOnlyAnthropicApiKey,
+        anthropicApiKey: "",
+      });
+      if (typeof patch.anthropicApiKey === "string") {
+        browserOnlyApiKeysByScope = setScopedBrowserApiKey(
+          scopedSettings,
+          browserOnlyApiKeysByScope,
+          patch.anthropicApiKey,
+        );
+      }
+      const next = normalizeAgentSettings({
+        ...scopedSettings,
+        anthropicApiKey: getScopedBrowserApiKey(
+          scopedSettings,
+          browserOnlyApiKeysByScope,
+        ),
       });
       writeStoredSettings(next);
       return next;
@@ -80,6 +121,9 @@ export function useAgentSettings() {
     loaded,
     byokReady:
       settings.executionMode !== "anthropic-api" ||
-      settings.anthropicApiKey.trim().length > 0,
+      ((!isApiKeyRequired(settings) ||
+        settings.anthropicApiKey.trim().length > 0) &&
+        settings.apiModel.trim().length > 0 &&
+        settings.apiBaseUrl.trim().length > 0),
   };
 }
