@@ -34,9 +34,8 @@ export async function POST(
   const agentConfig = resolveAgentExecutionConfig(
     getAgentExecutionInputFromPayload(payload),
   );
-  const runtimeAuthConfig = resolveSessionRuntimeAuthConfig(
-    getSessionRuntimeAuthInputFromPayload(payload),
-  );
+  const runtimeAuthInput = getSessionRuntimeAuthInputFromPayload(payload);
+  const runtimeAuthConfig = resolveSessionRuntimeAuthConfig(runtimeAuthInput);
 
   // 1. Fetch and validate task
   const task = db
@@ -109,9 +108,9 @@ export async function POST(
       `INSERT INTO sessions (
         id, project_id, task_id, worktree_name, worktree_path, branch_name,
         status, coding_agent_id, agent_team_id, session_auth_mode,
-        agent_api_key_env_var, prompt
+        agent_api_key_env_var, agent_model, prompt
       )
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)
        RETURNING *`
     )
     .get(
@@ -125,6 +124,7 @@ export async function POST(
       agentConfig.agentTeam.id,
       runtimeAuthConfig.mode,
       runtimeAuthConfig.agentApiKeyEnvVar,
+      runtimeAuthConfig.model,
       prompt
     ) as Session;
 
@@ -142,7 +142,7 @@ export async function POST(
 
   // 6. Spawn agent (non-blocking)
   try {
-    processManager.sendMessage(sessionId, prompt);
+    processManager.sendMessage(sessionId, prompt, runtimeAuthInput);
   } catch (err) {
     db.prepare(
       "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?"

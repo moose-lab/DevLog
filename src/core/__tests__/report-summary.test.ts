@@ -348,6 +348,7 @@ function session(overrides: Partial<ReportSession>): ReportSession {
     agent_team_id: "backend-coding-agent",
     session_auth_mode: "backend-oauth",
     agent_api_key_env_var: null,
+    agent_model: "claude-sonnet-4-6",
     prompt: null,
     exit_code: null,
     log_path: null,

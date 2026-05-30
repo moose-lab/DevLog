@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/core/db";
 import { processManager } from "@/core/process-manager";
+import { getSessionRuntimeAuthInputFromPayload } from "@/core/session-runtime-auth";
 import type { Session } from "@/core/types-dashboard";
 
 export async function GET(
@@ -42,7 +43,11 @@ export async function PATCH(
         return NextResponse.json({ error: "message is required" }, { status: 400 });
       }
       // No longer blocking on active turns — messages are queued automatically
-      processManager.sendMessage(id, message.trim());
+      processManager.sendMessage(
+        id,
+        message.trim(),
+        getSessionRuntimeAuthInputFromPayload(body),
+      );
       break;
 
     case "respond_permission":

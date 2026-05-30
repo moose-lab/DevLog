@@ -10,8 +10,9 @@ import { CreateTaskDialog } from "./create-task-dialog";
 import { TaskDetailDialog } from "./task-detail-dialog";
 import { useTasks } from "@/hooks/use-tasks";
 import { useTaskSessions } from "@/hooks/use-task-sessions";
+import { useAgentSettings } from "@/hooks/use-agent-settings";
 import type { Task, TaskStatus } from "@/core/types-dashboard";
-import type { SessionRuntimeAuthMode } from "@/core/session-runtime-auth";
+import type { SessionRuntimeAuthInput } from "@/core/session-runtime-auth";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -20,12 +21,17 @@ const COLUMNS: TaskStatus[] = ["todo", "in_progress", "review", "blocked", "done
 export function KanbanBoard() {
   const { loading, tasksByStatus, createTask, updateTask, deleteTask, reorder, executeTask } = useTasks();
   const taskSessions = useTaskSessions();
+  const { runtimePayload, byokReady } = useAgentSettings();
   const router = useRouter();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 
   const handleExecuteTask = async (taskId: string) => {
-    const result = await executeTask(taskId);
+    if (!byokReady) {
+      router.push("/settings");
+      return;
+    }
+    const result = await executeTask(taskId, runtimePayload);
     if (result?.session) {
       router.push(`/sessions/${result.session.id}`);
     }
@@ -86,9 +92,7 @@ export function KanbanBoard() {
     agentConfig?: {
       coding_agent_id: string;
       agent_team_id: string;
-      session_auth_mode: SessionRuntimeAuthMode;
-      agent_api_key_env_var?: string;
-    },
+    } & SessionRuntimeAuthInput,
     promptOverride?: string,
   ): Promise<{ id: string } | null> => {
     const prompt = promptOverride?.trim() || task.prompt;

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { Session } from "@/core/types-dashboard";
-import type { SessionRuntimeAuthMode } from "@/core/session-runtime-auth";
+import type { SessionRuntimeAuthInput } from "@/core/session-runtime-auth";
 
 export function useSessions() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -33,9 +33,7 @@ export function useSessions() {
     prompt: string;
     coding_agent_id?: string;
     agent_team_id?: string;
-    session_auth_mode?: SessionRuntimeAuthMode;
-    agent_api_key_env_var?: string;
-  }): Promise<Session | null> => {
+  } & SessionRuntimeAuthInput): Promise<Session | null> => {
     const res = await fetch("/api/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

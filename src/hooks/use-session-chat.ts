@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useAgentSettings } from "@/hooks/use-agent-settings";
 
 export interface ChatMsg {
   id: number;
@@ -50,6 +51,7 @@ function nextId(): number {
 }
 
 export function useSessionChat(sessionId: string | null) {
+  const { runtimePayload } = useAgentSettings();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [streamingText, setStreamingText] = useState("");
   const [streamingTools, setStreamingTools] = useState<
@@ -153,7 +155,7 @@ export function useSessionChat(sessionId: string | null) {
 
           case "tool_start":
             if (data.name) {
-              const newTool = { name: data.name!, input: data.input ?? {} };
+              const newTool = { name: data.name, input: data.input ?? {} };
               streamToolsRef.current = [...streamToolsRef.current, newTool];
               setStreamingTools(streamToolsRef.current);
             }
@@ -162,7 +164,7 @@ export function useSessionChat(sessionId: string | null) {
           case "tool_result":
             if (data.name) {
               const newResult = {
-                name: data.name!,
+                name: data.name,
                 output: data.output ?? "",
                 is_error: data.is_error,
               };
@@ -290,10 +292,14 @@ export function useSessionChat(sessionId: string | null) {
       await fetch(`/api/sessions/${sessionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "send", message: content.trim() }),
+        body: JSON.stringify({
+          action: "send",
+          message: content.trim(),
+          ...runtimePayload,
+        }),
       });
     },
-    [sessionId]
+    [runtimePayload, sessionId]
   );
 
   // Respond to a permission request

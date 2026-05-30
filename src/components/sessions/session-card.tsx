@@ -74,12 +74,13 @@ export function SessionCard({
         )}
 
         <div className="flex items-center gap-1.5 flex-wrap">
-          <AgentExecutionBadges
-            codingAgentId={session.coding_agent_id}
-            agentTeamId={session.agent_team_id}
-            sessionAuthMode={session.session_auth_mode}
-            agentApiKeyEnvVar={session.agent_api_key_env_var}
-          />
+            <AgentExecutionBadges
+              codingAgentId={session.coding_agent_id}
+              agentTeamId={session.agent_team_id}
+              sessionAuthMode={session.session_auth_mode}
+              agentApiKeyEnvVar={session.agent_api_key_env_var}
+              agentModel={session.agent_model}
+            />
         </div>
 
         {/* Actions */}

@@ -52,9 +52,8 @@ export async function POST(req: NextRequest) {
   const agentConfig = resolveAgentExecutionConfig(
     getAgentExecutionInputFromPayload(body),
   );
-  const runtimeAuthConfig = resolveSessionRuntimeAuthConfig(
-    getSessionRuntimeAuthInputFromPayload(body),
-  );
+  const runtimeAuthInput = getSessionRuntimeAuthInputFromPayload(body);
+  const runtimeAuthConfig = resolveSessionRuntimeAuthConfig(runtimeAuthInput);
   const sessionPrompt = [
     String(prompt).trim(),
     "",
@@ -68,9 +67,9 @@ export async function POST(req: NextRequest) {
       `INSERT INTO sessions (
         id, project_id, task_id, worktree_name, worktree_path, branch_name,
         status, coding_agent_id, agent_team_id, session_auth_mode,
-        agent_api_key_env_var, prompt
+        agent_api_key_env_var, agent_model, prompt
       )
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)
        RETURNING *`
     )
     .get(
@@ -84,6 +83,7 @@ export async function POST(req: NextRequest) {
       agentConfig.agentTeam.id,
       runtimeAuthConfig.mode,
       runtimeAuthConfig.agentApiKeyEnvVar,
+      runtimeAuthConfig.model,
       sessionPrompt
     ) as Session;
 
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
   // Send the initial prompt as the first turn
   try {
     // Don't await — let it process in the background
-    processManager.sendMessage(id, sessionPrompt);
+    processManager.sendMessage(id, sessionPrompt, runtimeAuthInput);
   } catch (err) {
     db.prepare(
       "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?"
