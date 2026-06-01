@@ -274,7 +274,7 @@ test("session runtime payload includes only the selected local CLI environment",
     session_auth_mode: "local-cli",
     local_cli_agent_id: "codex",
     agent_model: "gpt-5-codex",
-    agent_reasoning: "default",
+    agent_reasoning: "medium",
     local_cli_agent_env: {
       CODEX_BIN: "/opt/dev/codex",
       OPENAI_BASE_URL: "https://gateway.example.com/v1",
@@ -338,15 +338,15 @@ test("agent settings keep independent model choices per Local CLI agent", () => 
     localCliModel: "gpt-5-codex",
     localCliReasoning: "high",
     localCliAgentModels: {
-      claude: { model: "claude-opus-4-7", reasoning: "default" },
+      claude: { model: "claude-opus-4-7", reasoning: "medium" },
       codex: { model: "gpt-5-codex", reasoning: "high" },
-      gemini: { model: "gemini-2.5-pro", reasoning: "default" },
+      gemini: { model: "gemini-2.5-pro", reasoning: "medium" },
     },
   });
 
   assert.deepEqual(settings.localCliAgentModels.claude, {
     model: "claude-opus-4-7",
-    reasoning: "default",
+    reasoning: "medium",
   });
   assert.deepEqual(settings.localCliAgentModels.codex, {
     model: "gpt-5-codex",
@@ -354,7 +354,7 @@ test("agent settings keep independent model choices per Local CLI agent", () => 
   });
   assert.deepEqual(settings.localCliAgentModels.gemini, {
     model: "gemini-2.5-pro",
-    reasoning: "default",
+    reasoning: "medium",
   });
 });
 

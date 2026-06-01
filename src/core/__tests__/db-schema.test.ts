@@ -65,7 +65,7 @@ test("sessions store agent execution and runtime auth defaults", () => {
   assert.equal(row.agent_api_key_env_var, null);
   assert.equal(row.local_cli_agent_id, "claude");
   assert.equal(row.agent_model, "default");
-  assert.equal(row.agent_reasoning, "default");
+  assert.equal(row.agent_reasoning, "medium");
   assert.equal(row.agent_api_protocol, "anthropic");
   assert.equal(row.agent_api_version, "");
   assert.equal(row.agent_base_url, "https://api.anthropic.com");

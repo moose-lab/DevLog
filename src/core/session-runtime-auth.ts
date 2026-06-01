@@ -259,7 +259,11 @@ function sanitizeBaseUrl(
 function sanitizeReasoning(
   value: string | null | undefined,
   localCliAgentId: string,
+  localCliAgentValid = true,
 ): string {
+  if (!localCliAgentValid) {
+    return DEFAULT_LOCAL_CLI_REASONING;
+  }
   const localCliAgent = findLocalCliAgent(localCliAgentId);
   const reasoningOptions = localCliAgent.reasoningOptions ?? [
     { id: DEFAULT_LOCAL_CLI_REASONING, label: "Default" },
@@ -321,7 +325,11 @@ export function resolveSessionRuntimeAuthConfig(
       localCliAgentId,
       localCliAgentValid,
     ),
-    reasoning: sanitizeReasoning(input.agent_reasoning, localCliAgentId),
+    reasoning: sanitizeReasoning(
+      input.agent_reasoning,
+      localCliAgentId,
+      localCliAgentValid,
+    ),
     baseUrl:
       mode === "anthropic-api-key"
         ? sanitizeBaseUrl(input.agent_base_url, apiProtocol)

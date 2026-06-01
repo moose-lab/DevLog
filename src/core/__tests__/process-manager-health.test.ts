@@ -94,6 +94,7 @@ test("buildClaudeProcessArgs passes selected model for local CLI mode", () => {
       session_auth_mode: "local-cli",
       local_cli_agent_id: "claude",
       agent_model: "claude-opus-4-7",
+      agent_reasoning: "xhigh",
     }),
     null,
     ["Read"],
@@ -112,6 +113,10 @@ test("buildClaudeProcessArgs passes selected model for local CLI mode", () => {
     "--model",
     "claude-opus-4-7",
   ]);
+  assert.deepEqual(
+    args.slice(args.indexOf("--effort"), args.indexOf("--effort") + 2),
+    ["--effort", "xhigh"],
+  );
 });
 
 test("buildClaudeProcessArgs omits model flag when local CLI should use its own config", () => {
@@ -126,6 +131,10 @@ test("buildClaudeProcessArgs omits model flag when local CLI should use its own 
   );
 
   assert.equal(args.includes("--model"), false);
+  assert.deepEqual(
+    args.slice(args.indexOf("--effort"), args.indexOf("--effort") + 2),
+    ["--effort", "medium"],
+  );
 });
 
 test("buildClaudeProcessArgs isolates Anthropic BYOK mode with bare CLI auth", () => {

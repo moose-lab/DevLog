@@ -194,6 +194,10 @@ export function buildClaudeProcessArgs(
     args.push("--model", runtimeAuthConfig.model);
   }
 
+  if (runtimeAuthConfig.mode === "local-cli") {
+    args.push("--effort", runtimeAuthConfig.reasoning);
+  }
+
   if (runtimeAuthConfig.mode === "anthropic-api-key") {
     args.push("--bare");
   }

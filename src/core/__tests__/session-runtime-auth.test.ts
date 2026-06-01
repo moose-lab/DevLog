@@ -16,7 +16,7 @@ test("missing runtime auth input resolves to local CLI", () => {
   assert.equal(config.mode, "local-cli");
   assert.equal(config.model, DEFAULT_AGENT_MODEL);
   assert.equal(config.localCliAgentId, "claude");
-  assert.equal(config.reasoning, "default");
+  assert.equal(config.reasoning, "medium");
   assert.equal(config.agentApiKeyEnvVar, null);
   assert.equal(config.anthropicApiKey, null);
 });
@@ -298,5 +298,5 @@ test("invalid local CLI selections fall back to supported defaults", () => {
 
   assert.equal(config.localCliAgentId, "claude");
   assert.equal(config.model, DEFAULT_AGENT_MODEL);
-  assert.equal(config.reasoning, "default");
+  assert.equal(config.reasoning, "medium");
 });

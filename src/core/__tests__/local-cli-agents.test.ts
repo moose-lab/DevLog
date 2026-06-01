@@ -2,7 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_LOCAL_CLI_MODEL,
+  DEFAULT_LOCAL_CLI_REASONING,
   LOCAL_CLI_AGENT_DEFINITIONS,
+  LOCAL_CLI_INTELLIGENCE_OPTIONS,
   SUPPORTED_LOCAL_CLI_AGENT_NAMES,
   detectLocalCliAgents,
   getLocalCliAgentStatus,
@@ -132,6 +134,64 @@ test("local CLI registry is limited to the current supported agent set", () => {
       ].includes(agent.id),
     ),
     false,
+  );
+});
+
+test("Claude Code and Codex CLI expose current model and intelligence choices", () => {
+  const claude = LOCAL_CLI_AGENT_DEFINITIONS.find(
+    (agent) => agent.id === "claude",
+  );
+  const codex = LOCAL_CLI_AGENT_DEFINITIONS.find(
+    (agent) => agent.id === "codex",
+  );
+
+  assert.ok(claude);
+  assert.ok(codex);
+  assert.deepEqual(
+    LOCAL_CLI_INTELLIGENCE_OPTIONS.map((option) => option.id),
+    ["low", "medium", "high", "xhigh"],
+  );
+  assert.deepEqual(
+    LOCAL_CLI_INTELLIGENCE_OPTIONS.map((option) => option.label),
+    ["Low", "Medium", "High", "Extra High"],
+  );
+  assert.equal(DEFAULT_LOCAL_CLI_REASONING, "medium");
+  assert.deepEqual(claude.reasoningOptions, LOCAL_CLI_INTELLIGENCE_OPTIONS);
+  assert.deepEqual(codex.reasoningOptions, LOCAL_CLI_INTELLIGENCE_OPTIONS);
+  assert.deepEqual(
+    claude.models.map((model) => model.id),
+    [
+      "default",
+      "best",
+      "sonnet",
+      "opus",
+      "haiku",
+      "opusplan",
+      "sonnet[1m]",
+      "opus[1m]",
+      "claude-opus-4-8",
+      "claude-opus-4-8[1m]",
+      "claude-opus-4-7",
+      "claude-sonnet-4-6",
+      "claude-sonnet-4-6[1m]",
+      "claude-opus-4-6",
+      "claude-haiku-4-5-20251001",
+      "claude-sonnet-4-5-20250929",
+    ],
+  );
+  assert.deepEqual(
+    codex.models.map((model) => model.id),
+    [
+      "default",
+      "gpt-5.5",
+      "gpt-5.4",
+      "gpt-5.4-mini",
+      "gpt-5.3-codex",
+      "gpt-5.2-codex",
+      "gpt-5.2",
+      "gpt-5-codex",
+      "gpt-5",
+    ],
   );
 });
 

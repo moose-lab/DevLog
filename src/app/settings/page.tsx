@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
+  Info,
   KeyRound,
   Laptop,
   RefreshCw,
@@ -58,6 +59,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface LocalCliAgentView extends LocalCliAgentDefinition {
   available: boolean;
@@ -486,14 +492,17 @@ export default function SettingsPage() {
   const chooseAgent = (agent: LocalCliAgentView) => {
     if (!isLocalCliAgentRunnable(agent)) return;
     const savedChoice = settings.localCliAgentModels[agent.id];
+    const defaultReasoning =
+      agent.reasoningOptions?.some(
+        (option) => option.id === DEFAULT_LOCAL_CLI_REASONING,
+      )
+        ? DEFAULT_LOCAL_CLI_REASONING
+        : agent.reasoningOptions?.[0]?.id ?? DEFAULT_LOCAL_CLI_REASONING;
     setSettings({
       localCliAgentId: agent.id,
       localCliModel:
         savedChoice?.model ?? agent.models[0]?.id ?? DEFAULT_LOCAL_CLI_MODEL.id,
-      localCliReasoning:
-        savedChoice?.reasoning ??
-        agent.reasoningOptions?.[0]?.id ??
-        DEFAULT_LOCAL_CLI_REASONING,
+      localCliReasoning: savedChoice?.reasoning ?? defaultReasoning,
     });
   };
 
@@ -603,15 +612,33 @@ export default function SettingsPage() {
             <div className="space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5">
                 <div className="min-w-0">
-                  <h2 className="text-sm font-medium">Local CLI registry</h2>
+                  <h2 className="flex items-center gap-1.5 text-sm font-medium">
+                    Local CLI registry
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="inline-flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          aria-label="View supported Local CLI scope"
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="right"
+                        align="start"
+                        sideOffset={6}
+                        className="max-w-xs text-left leading-5"
+                      >
+                        Current support scope:{" "}
+                        {SUPPORTED_LOCAL_CLI_AGENT_NAMES.join(", ")}. Other
+                        local CLIs are ignored in this phase.
+                      </TooltipContent>
+                    </Tooltip>
+                  </h2>
                   <p className="mt-1 text-xs text-muted-foreground">
                     Detected by scanning your PATH against DevLog's current
                     supported registry.
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Current support scope:{" "}
-                    {SUPPORTED_LOCAL_CLI_AGENT_NAMES.join(", ")}. Other local
-                    CLIs are ignored in this phase.
                   </p>
                 </div>
                 <Button
@@ -736,7 +763,7 @@ export default function SettingsPage() {
 
                 {selectedAgent?.reasoningOptions ? (
                   <div className="space-y-1.5">
-                    <Label htmlFor="local-cli-reasoning">Reasoning</Label>
+                    <Label htmlFor="local-cli-reasoning">Intelligence</Label>
                     <Select
                       value={settings.localCliReasoning}
                       disabled={!selectedAgentRunnable}
@@ -756,13 +783,13 @@ export default function SettingsPage() {
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">
-                      {selectedReasoning?.label ?? "Default"}
+                      {selectedReasoning?.label ?? "Medium"}
                     </p>
                   </div>
                 ) : (
                   <div className="flex items-end">
                     <p className="text-xs text-muted-foreground">
-                      This CLI uses its own configured reasoning behavior.
+                      This CLI uses its own configured intelligence behavior.
                     </p>
                   </div>
                 )}

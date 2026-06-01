@@ -29,7 +29,13 @@ export const DEFAULT_LOCAL_CLI_MODEL: LocalCliModelOption = {
   id: "default",
   label: "Default (CLI config)",
 };
-export const DEFAULT_LOCAL_CLI_REASONING = "default";
+export const DEFAULT_LOCAL_CLI_REASONING = "medium";
+export const LOCAL_CLI_INTELLIGENCE_OPTIONS: LocalCliModelOption[] = [
+  { id: "low", label: "Low" },
+  { id: "medium", label: "Medium" },
+  { id: "high", label: "High" },
+  { id: "xhigh", label: "Extra High" },
+];
 
 export const LOCAL_CLI_AGENT_DEFINITIONS: LocalCliAgentDefinition[] = [
   {
@@ -40,13 +46,23 @@ export const LOCAL_CLI_AGENT_DEFINITIONS: LocalCliAgentDefinition[] = [
     versionArgs: ["--version"],
     models: [
       DEFAULT_LOCAL_CLI_MODEL,
+      { id: "best", label: "Best (alias)" },
       { id: "sonnet", label: "Sonnet (alias)" },
       { id: "opus", label: "Opus (alias)" },
       { id: "haiku", label: "Haiku (alias)" },
-      { id: "claude-sonnet-4-6", label: "claude-sonnet-4-6" },
+      { id: "opusplan", label: "Opus Plan Mode (alias)" },
+      { id: "sonnet[1m]", label: "Sonnet 1M context (alias)" },
+      { id: "opus[1m]", label: "Opus 1M context (alias)" },
+      { id: "claude-opus-4-8", label: "claude-opus-4-8" },
+      { id: "claude-opus-4-8[1m]", label: "claude-opus-4-8[1m]" },
       { id: "claude-opus-4-7", label: "claude-opus-4-7" },
+      { id: "claude-sonnet-4-6", label: "claude-sonnet-4-6" },
+      { id: "claude-sonnet-4-6[1m]", label: "claude-sonnet-4-6[1m]" },
+      { id: "claude-opus-4-6", label: "claude-opus-4-6" },
       { id: "claude-haiku-4-5-20251001", label: "claude-haiku-4-5-20251001" },
+      { id: "claude-sonnet-4-5-20250929", label: "claude-sonnet-4-5-20250929" },
     ],
+    reasoningOptions: LOCAL_CLI_INTELLIGENCE_OPTIONS,
   },
   {
     id: "codex",
@@ -56,18 +72,16 @@ export const LOCAL_CLI_AGENT_DEFINITIONS: LocalCliAgentDefinition[] = [
     versionArgs: ["--version"],
     models: [
       DEFAULT_LOCAL_CLI_MODEL,
+      { id: "gpt-5.5", label: "gpt-5.5" },
+      { id: "gpt-5.4", label: "gpt-5.4" },
+      { id: "gpt-5.4-mini", label: "gpt-5.4-mini" },
+      { id: "gpt-5.3-codex", label: "gpt-5.3-codex" },
+      { id: "gpt-5.2-codex", label: "gpt-5.2-codex" },
+      { id: "gpt-5.2", label: "gpt-5.2" },
       { id: "gpt-5-codex", label: "gpt-5-codex" },
       { id: "gpt-5", label: "gpt-5" },
-      { id: "o3", label: "o3" },
-      { id: "o4-mini", label: "o4-mini" },
     ],
-    reasoningOptions: [
-      { id: DEFAULT_LOCAL_CLI_REASONING, label: "Default" },
-      { id: "minimal", label: "Minimal" },
-      { id: "low", label: "Low" },
-      { id: "medium", label: "Medium" },
-      { id: "high", label: "High" },
-    ],
+    reasoningOptions: LOCAL_CLI_INTELLIGENCE_OPTIONS,
   },
   {
     id: "gemini",
