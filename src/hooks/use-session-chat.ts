@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useAgentSettings } from "@/hooks/use-agent-settings";
+import type { SessionContinuationRuntimeSnapshot } from "@/core/agent-settings";
 
 export interface ChatMsg {
   id: number;
@@ -50,8 +51,17 @@ function nextId(): number {
   return ++_idCounter;
 }
 
-export function useSessionChat(sessionId: string | null) {
-  const { runtimePayload } = useAgentSettings();
+export function useSessionChat(
+  sessionId: string | null,
+  sessionRuntime?: SessionContinuationRuntimeSnapshot,
+) {
+  const {
+    runtimePayload,
+    settingsReady,
+    loaded,
+    getRuntimePayloadForSession,
+    isRuntimeReadyForSession,
+  } = useAgentSettings();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [streamingText, setStreamingText] = useState("");
   const [streamingTools, setStreamingTools] = useState<
@@ -76,6 +86,21 @@ export function useSessionChat(sessionId: string | null) {
   // Capture streaming tools in a ref for finalization
   const streamToolsRef = useRef<{ name: string; input: Record<string, unknown> }[]>([]);
   const streamToolResultsRef = useRef<{ name: string; output: string; is_error?: boolean }[]>([]);
+  const continuationRuntimePayload = useMemo(
+    () =>
+      sessionRuntime
+        ? getRuntimePayloadForSession(sessionRuntime)
+        : runtimePayload,
+    [getRuntimePayloadForSession, runtimePayload, sessionRuntime],
+  );
+  const continuationRuntimeReady = useMemo(
+    () =>
+      loaded &&
+      (sessionRuntime
+        ? isRuntimeReadyForSession(sessionRuntime)
+        : settingsReady),
+    [loaded, settingsReady, isRuntimeReadyForSession, sessionRuntime],
+  );
 
   // Connect SSE
   const connect = useCallback(() => {
@@ -295,11 +320,11 @@ export function useSessionChat(sessionId: string | null) {
         body: JSON.stringify({
           action: "send",
           message: content.trim(),
-          ...runtimePayload,
+          ...continuationRuntimePayload,
         }),
       });
     },
-    [runtimePayload, sessionId]
+    [continuationRuntimePayload, sessionId]
   );
 
   // Respond to a permission request
@@ -330,6 +355,7 @@ export function useSessionChat(sessionId: string | null) {
     error,
     turnCost,
     sendMessage,
+    byokReady: continuationRuntimeReady,
     // Interactive session features
     pendingPermission,
     respondToPermission,

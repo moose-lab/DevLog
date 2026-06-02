@@ -17,6 +17,7 @@ import {
 } from "@/core/agent-presets";
 import {
   getSessionRuntimeAuthInputFromPayload,
+  getPersistedSessionBaseUrl,
   resolveSessionRuntimeAuthConfig,
 } from "@/core/session-runtime-auth";
 import type { Task, Session } from "@/core/types-dashboard";
@@ -122,7 +123,7 @@ export async function POST(
         agent_reasoning, agent_api_protocol, agent_api_version,
         agent_base_url, agent_max_tokens, prompt
       )
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING *`
     )
     .get(
@@ -141,7 +142,7 @@ export async function POST(
       runtimeAuthConfig.reasoning,
       runtimeAuthConfig.apiProtocol,
       runtimeAuthConfig.apiVersion,
-      runtimeAuthConfig.baseUrl,
+      getPersistedSessionBaseUrl(runtimeAuthConfig),
       runtimeAuthConfig.maxTokens,
       prompt
     ) as Session;

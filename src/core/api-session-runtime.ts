@@ -6,7 +6,7 @@ import {
   type ProviderChatMessage,
 } from "./api-provider-runtime";
 import {
-  resolveSessionRuntimeAuthConfig,
+  resolveStoredSessionRuntimeAuthConfig,
   type SessionRuntimeAuthInput,
 } from "./session-runtime-auth";
 import type { ChatStreamEvent } from "./stream-manager";
@@ -51,25 +51,10 @@ export async function runProviderSessionTurn({
     return { ok: false, error: "Session not found" };
   }
 
-  const runtimeAuthConfig = resolveSessionRuntimeAuthConfig({
-    session_auth_mode:
-      runtimeAuthInput.session_auth_mode ?? session.session_auth_mode,
-    agent_api_key_env_var:
-      runtimeAuthInput.agent_api_key_env_var ?? session.agent_api_key_env_var,
-    local_cli_agent_id:
-      runtimeAuthInput.local_cli_agent_id ?? session.local_cli_agent_id,
-    agent_model: runtimeAuthInput.agent_model ?? session.agent_model,
-    agent_reasoning:
-      runtimeAuthInput.agent_reasoning ?? session.agent_reasoning,
-    agent_api_protocol:
-      runtimeAuthInput.agent_api_protocol ?? session.agent_api_protocol,
-    agent_api_version:
-      runtimeAuthInput.agent_api_version ?? session.agent_api_version,
-    agent_base_url: runtimeAuthInput.agent_base_url ?? session.agent_base_url,
-    agent_max_tokens:
-      runtimeAuthInput.agent_max_tokens ?? session.agent_max_tokens,
-    anthropic_api_key: runtimeAuthInput.anthropic_api_key,
-  });
+  const runtimeAuthConfig = resolveStoredSessionRuntimeAuthConfig(
+    session,
+    runtimeAuthInput,
+  );
 
   if (
     runtimeAuthConfig.mode !== "anthropic-api-key" ||

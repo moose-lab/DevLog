@@ -91,6 +91,59 @@ test("runProviderSessionTurn executes API mode without a Local CLI process", asy
   );
 });
 
+test("runProviderSessionTurn preserves the session provider and model when current Settings drift", async () => {
+  const db = makeTestDb();
+  let requestUrl = "";
+  let requestBody: unknown = null;
+
+  db.prepare(
+    `INSERT INTO sessions (
+      id, project_id, worktree_path, status, session_auth_mode,
+      local_cli_agent_id, agent_model, agent_reasoning, agent_api_protocol,
+      agent_api_version, agent_base_url, agent_max_tokens
+    ) VALUES (
+      'session-persisted-runtime', 'test', '/repo', 'idle', 'anthropic-api-key',
+      'claude', 'gpt-4o-mini', 'default', 'openai', '', 'https://api.openai.com/v1', 16384
+    )`,
+  ).run();
+
+  const result = await runProviderSessionTurn({
+    db,
+    sessionId: "session-persisted-runtime",
+    message: "Continue with the original session runtime",
+    runtimeAuthInput: {
+      session_auth_mode: "anthropic-api-key",
+      agent_api_protocol: "google",
+      agent_model: "gemini-2.0-flash",
+      agent_base_url: "https://generativelanguage.googleapis.com",
+      agent_max_tokens: 4096,
+      anthropic_api_key: "sk-openai-test",
+    },
+    emit: () => {},
+    fetchImpl: async (url, init) => {
+      requestUrl = String(url);
+      requestBody = JSON.parse(String(init?.body));
+      return jsonResponse(200, {
+        choices: [{ message: { content: "Original provider answer" } }],
+      });
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(requestUrl, /^https:\/\/api\.openai\.com\/v1\/chat\/completions/);
+  assert.deepEqual(requestBody, {
+    model: "gpt-4o-mini",
+    max_tokens: 16384,
+    messages: [
+      {
+        role: "user",
+        content: "Continue with the original session runtime",
+      },
+    ],
+    stream: false,
+  });
+});
+
 test("runProviderSessionTurn fails before recording a user message when the browser API key is missing", async () => {
   const db = makeTestDb();
   const events: ChatStreamEvent[] = [];

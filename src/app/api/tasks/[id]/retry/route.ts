@@ -4,9 +4,21 @@ import { getDb } from "@/core/db";
 import { resolveProjectId } from "@/lib/api-utils";
 import { getProject } from "@/core/project-adapter";
 import { listWorktrees } from "@/core/worktree-manager";
-import { processManager } from "@/core/process-manager";
+import {
+  processManager,
+  validateSessionRuntimeProcessLaunch,
+} from "@/core/process-manager";
 import { compileSession } from "@/core/vcc";
-import { buildPromptTemplate } from "@/core/task-lifecycle";
+import { buildTaskRetryPrompt } from "@/core/task-retry";
+import {
+  getAgentExecutionInputFromPayload,
+  resolveAgentExecutionConfig,
+} from "@/core/agent-presets";
+import {
+  getSessionRuntimeAuthInputFromPayload,
+  getPersistedSessionBaseUrl,
+  resolveSessionRuntimeAuthConfig,
+} from "@/core/session-runtime-auth";
 import type { Task, Session } from "@/core/types-dashboard";
 
 export async function POST(
@@ -16,7 +28,17 @@ export async function POST(
   const { id: taskId } = await params;
   const db = getDb();
   const projectId = resolveProjectId(req);
-  const { feedback } = (await req.json()) as { feedback: string };
+  let payload: unknown;
+  try {
+    payload = await req.json();
+  } catch {
+    payload = {};
+  }
+  const record =
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {};
+  const feedback = typeof record.feedback === "string" ? record.feedback : "";
 
   if (!feedback?.trim()) {
     return NextResponse.json({ error: "Feedback is required" }, { status: 400 });
@@ -48,6 +70,18 @@ export async function POST(
   }
 
   const project = getProject(projectId);
+  const agentConfig = resolveAgentExecutionConfig(
+    getAgentExecutionInputFromPayload(payload),
+  );
+  const runtimeAuthInput = getSessionRuntimeAuthInputFromPayload(payload);
+  const runtimeAuthConfig = resolveSessionRuntimeAuthConfig(runtimeAuthInput);
+  const preflight = validateSessionRuntimeProcessLaunch(
+    runtimeAuthConfig,
+    wt.path,
+  );
+  if (!preflight.ok) {
+    return NextResponse.json({ error: preflight.error }, { status: 400 });
+  }
 
   // 3. Get previous session brief for context
   let previousBrief = "";
@@ -70,32 +104,29 @@ export async function POST(
   }
 
   // 4. Build retry prompt
-  const basePrompt = buildPromptTemplate(
+  const retryPrompt = buildTaskRetryPrompt({
     task,
     project,
-    wt.path,
-    wt.branch
-  );
-  const retryPrompt = [
-    basePrompt,
-    "",
-    "## Previous Attempt Feedback",
-    feedback,
-    previousBrief
-      ? `\n## Previous Session Summary\n\`\`\`\n${previousBrief}\n\`\`\``
-      : "",
-    "",
-    "Address the feedback above and complete the task.",
-  ]
-    .filter(Boolean)
-    .join("\n");
+    worktreePath: wt.path,
+    branchName: wt.branch,
+    feedback: feedback.trim(),
+    previousBrief,
+    agentConfig,
+    runtimeAuthConfig,
+  });
 
   // 5. Create new session
   const sessionId = randomBytes(8).toString("hex");
   const session = db
     .prepare(
-      `INSERT INTO sessions (id, project_id, task_id, worktree_name, worktree_path, branch_name, status, prompt)
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?)
+      `INSERT INTO sessions (
+        id, project_id, task_id, worktree_name, worktree_path, branch_name,
+        status, coding_agent_id, agent_team_id, session_auth_mode,
+        agent_api_key_env_var, local_cli_agent_id, agent_model,
+        agent_reasoning, agent_api_protocol, agent_api_version,
+        agent_base_url, agent_max_tokens, prompt
+      )
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING *`
     )
     .get(
@@ -105,6 +136,17 @@ export async function POST(
       task.worktree_name,
       wt.path,
       wt.branch,
+      agentConfig.codingAgent.id,
+      agentConfig.agentTeam.id,
+      runtimeAuthConfig.mode,
+      runtimeAuthConfig.agentApiKeyEnvVar,
+      runtimeAuthConfig.localCliAgentId,
+      runtimeAuthConfig.model,
+      runtimeAuthConfig.reasoning,
+      runtimeAuthConfig.apiProtocol,
+      runtimeAuthConfig.apiVersion,
+      getPersistedSessionBaseUrl(runtimeAuthConfig),
+      runtimeAuthConfig.maxTokens,
       retryPrompt
     ) as Session;
 
@@ -115,7 +157,7 @@ export async function POST(
 
   // 7. Spawn agent
   try {
-    processManager.sendMessage(sessionId, retryPrompt);
+    processManager.sendMessage(sessionId, retryPrompt, runtimeAuthInput);
   } catch (err) {
     db.prepare(
       "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?"

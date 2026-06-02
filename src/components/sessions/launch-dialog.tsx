@@ -57,7 +57,8 @@ export function LaunchDialog({ onSubmit }: LaunchDialogProps) {
   const [agentTeamId, setAgentTeamId] = useState(DEFAULT_AGENT_TEAM_ID);
   const [prompt, setPrompt] = useState("");
   const [launching, setLaunching] = useState(false);
-  const { settings, runtimePayload, byokReady } = useAgentSettings();
+  const { settings, runtimePayload, byokReady, loaded, settingsReady } =
+    useAgentSettings();
 
   useEffect(() => {
     if (open) {
@@ -77,6 +78,7 @@ export function LaunchDialog({ onSubmit }: LaunchDialogProps) {
   }, [open, selectedWorktree]);
 
   const handleSubmit = async () => {
+    if (!settingsReady) return;
     if (!prompt.trim() || launching) return;
 
     const wt = worktrees.find((w) => w.name === selectedWorktree);
@@ -127,11 +129,11 @@ export function LaunchDialog({ onSubmit }: LaunchDialogProps) {
       </DialogTrigger>
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>New Claude Code Session</DialogTitle>
+          <DialogTitle>New Coding Agent Session</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label>What should Claude do?</Label>
+            <Label>What should the agent do?</Label>
             <Textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
@@ -142,7 +144,7 @@ export function LaunchDialog({ onSubmit }: LaunchDialogProps) {
               className="resize-none"
             />
             <p className="text-[10px] text-muted-foreground">
-              Describe the task clearly. Claude will work in an isolated session.
+              Describe the task clearly. The selected agent will work in an isolated session.
             </p>
           </div>
 
@@ -175,7 +177,7 @@ export function LaunchDialog({ onSubmit }: LaunchDialogProps) {
 
           <Button
             onClick={handleSubmit}
-            disabled={!prompt.trim() || launching || !byokReady}
+            disabled={!prompt.trim() || launching || !settingsReady}
             className="w-full"
           >
             {launching ? (
@@ -183,6 +185,8 @@ export function LaunchDialog({ onSubmit }: LaunchDialogProps) {
                 <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
                 Launching...
               </>
+            ) : !loaded ? (
+              <>Loading Settings...</>
             ) : !byokReady ? (
               <>Add API key in Settings</>
             ) : (

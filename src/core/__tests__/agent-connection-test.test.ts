@@ -3,6 +3,7 @@ import { PassThrough } from "stream";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  DEFAULT_AGENT_TIMEOUT_MS,
   testSessionRuntimeConnection,
   validateAgentConnectionBaseUrl,
   type SpawnedConnectionProcess,
@@ -324,6 +325,10 @@ test("local CLI connection test reports missing binaries before spawn", async ()
   assert.equal(result.kind, "agent_not_installed");
 });
 
+test("local CLI connection test allows slow auth refresh by default", () => {
+  assert.equal(DEFAULT_AGENT_TIMEOUT_MS, 180_000);
+});
+
 test("local CLI connection test treats assistant text as a successful smoke run", async () => {
   let stdin = "";
   const result = await testSessionRuntimeConnection(
@@ -348,6 +353,42 @@ test("local CLI connection test treats assistant text as a successful smoke run"
   assert.equal(result.agentName, "Qwen Code");
   assert.equal(result.sample, "ok");
   assert.equal(stdin, "Reply with only: ok");
+});
+
+test("local CLI connection test extracts Codex agent messages and ignores reconnect errors", async () => {
+  const result = await testSessionRuntimeConnection(
+    resolveSessionRuntimeAuthConfig({
+      session_auth_mode: "local-cli",
+      local_cli_agent_id: "codex",
+      agent_model: "default",
+    }),
+    {
+      cwd: "/repo",
+      env: { NODE_ENV: "test", PATH: "/bin" },
+      resolveBin: () => "/mock/bin/codex",
+      spawnImpl: fakeSpawn(
+        [
+          JSON.stringify({
+            type: "error",
+            message: "Reconnecting... 2/5 (request timed out)",
+          }),
+          JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text: "ok" },
+          }),
+          JSON.stringify({ type: "turn.completed" }),
+          "",
+        ].join("\n"),
+        0,
+      ),
+      timeoutMs: 100,
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.kind, "success");
+  assert.equal(result.agentName, "Codex CLI");
+  assert.equal(result.sample, "ok");
 });
 
 test("local CLI connection test rejects assistant text from non-zero exits", async () => {

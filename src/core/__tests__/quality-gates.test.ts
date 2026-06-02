@@ -35,3 +35,94 @@ test("Husky pre-commit hook runs the shared pre-commit gate", () => {
   assert.match(hook, /bun run quality:precommit/);
   assert.equal(mode & 0o111, 0o111);
 });
+
+test("session insert route SQL has one value expression per column", () => {
+  const routes = [
+    "src/app/api/sessions/route.ts",
+    "src/app/api/tasks/[id]/execute/route.ts",
+    "src/app/api/tasks/[id]/retry/route.ts",
+  ];
+
+  for (const route of routes) {
+    const source = readRepoFile(route);
+    const match = source.match(
+      /INSERT INTO sessions \(([\s\S]*?)\)\s+VALUES \(([\s\S]*?)\)\s+RETURNING \*/m,
+    );
+    assert.ok(match, `${route} should contain a sessions insert`);
+
+    const columns = match[1]
+      .split(",")
+      .map((column) => column.trim())
+      .filter(Boolean);
+    const valueExpressions = match[2]
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    assert.equal(
+      valueExpressions.length,
+      columns.length,
+      `${route} session insert must keep columns and VALUES in sync`,
+    );
+  }
+});
+
+test("generic task and session launch copy is not hard-coded to Claude Code", () => {
+  const genericLaunchSurfaces = [
+    "src/components/sessions/launch-dialog.tsx",
+    "src/components/kanban/task-detail-dialog.tsx",
+  ];
+
+  for (const route of genericLaunchSurfaces) {
+    const source = readRepoFile(route);
+    assert.doesNotMatch(
+      source,
+      /Claude Code|What should Claude|Claude will/,
+      `${route} should describe the selected coding agent generically`,
+    );
+  }
+});
+
+test("task and session runtime dispatch waits for browser settings to load", () => {
+  const runtimeDispatchSurfaces = [
+    "src/components/kanban/board.tsx",
+    "src/components/kanban/task-detail-dialog.tsx",
+    "src/components/kanban/task-review-panel.tsx",
+    "src/components/sessions/launch-dialog.tsx",
+    "src/hooks/use-session-chat.ts",
+  ];
+
+  for (const route of runtimeDispatchSurfaces) {
+    const source = readRepoFile(route);
+    assert.match(
+      source,
+      /useAgentSettings\(\)[\s\S]*loaded|loaded[\s\S]*useAgentSettings\(\)/,
+      `${route} must read the agent settings loaded flag before dispatching runtime payload`,
+    );
+    assert.match(
+      source,
+      /settingsReady|runtimeReady/,
+      `${route} must gate runtime dispatch on loaded settings plus runtime readiness`,
+    );
+  }
+});
+
+test("dashboard task quick view forwards runtime payload from the detail dialog", () => {
+  const source = readRepoFile("src/components/dashboard/task-quick-view.tsx");
+
+  assert.match(
+    source,
+    /agentConfig\?: \{[\s\S]*SessionRuntimeAuthInput/,
+    "dashboard quick task launcher must accept the runtime payload supplied by TaskDetailDialog",
+  );
+  assert.match(
+    source,
+    /promptOverride\?: string/,
+    "dashboard quick task launcher must accept the edited prompt supplied by TaskDetailDialog",
+  );
+  assert.match(
+    source,
+    /\.\.\.agentConfig/,
+    "dashboard quick task launcher must forward runtime payload fields to /api/sessions",
+  );
+});

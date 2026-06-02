@@ -6,6 +6,7 @@ import {
   type ChatMsg,
   type PermissionRequest,
 } from "@/hooks/use-session-chat";
+import type { SessionContinuationRuntimeSnapshot } from "@/core/agent-settings";
 import type { SessionStatus } from "@/core/types-dashboard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -101,15 +102,25 @@ export function isTerminalSessionStatus(
 export function getSessionInstructionInputCopy({
   processing,
   sessionEnded,
+  runtimeReady = true,
 }: {
   processing: boolean;
   sessionEnded: boolean;
+  runtimeReady?: boolean;
 }): { placeholder: string; helperText: string; disabledText: string } {
   if (sessionEnded) {
     return {
       placeholder: "",
       helperText: "",
       disabledText: "Session ended",
+    };
+  }
+
+  if (!runtimeReady) {
+    return {
+      placeholder: "",
+      helperText: "",
+      disabledText: "Add API key in Settings",
     };
   }
 
@@ -347,9 +358,14 @@ function StreamingBubble({
 interface SessionChatProps {
   sessionId: string;
   isActive: boolean;
+  sessionRuntime?: SessionContinuationRuntimeSnapshot;
 }
 
-export function SessionChat({ sessionId, isActive }: SessionChatProps) {
+export function SessionChat({
+  sessionId,
+  isActive,
+  sessionRuntime,
+}: SessionChatProps) {
   const {
     messages,
     streamingText,
@@ -363,7 +379,8 @@ export function SessionChat({ sessionId, isActive }: SessionChatProps) {
     pendingPermission,
     respondToPermission,
     queuedCount,
-  } = useSessionChat(sessionId);
+    byokReady,
+  } = useSessionChat(sessionId, sessionRuntime);
 
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -371,12 +388,13 @@ export function SessionChat({ sessionId, isActive }: SessionChatProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
-  // Input is always available unless the session has ended
+  // Input is available when the active session can use the selected runtime.
   const sessionEnded = isTerminalSessionStatus(sessionStatus);
-  const canSend = isActive && !sessionEnded;
+  const canSend = isActive && !sessionEnded && byokReady;
   const inputCopy = getSessionInstructionInputCopy({
     processing,
     sessionEnded,
+    runtimeReady: byokReady,
   });
 
   // Auto-scroll

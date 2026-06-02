@@ -14,6 +14,7 @@ import {
   buildClaudeProcessEnv,
   DEFAULT_AGENT_MODEL,
   resolveSessionRuntimeAuthConfig,
+  resolveStoredSessionRuntimeAuthConfig,
   type SessionRuntimeAuthConfig,
   type SessionRuntimeAuthInput,
 } from "./session-runtime-auth";
@@ -690,26 +691,7 @@ class ProcessManager {
   ): SessionRuntimeAuthConfig | null {
     const session = this.getStoredSessionRuntimeRow(sessionId);
     if (!session) return null;
-    return resolveSessionRuntimeAuthConfig({
-      session_auth_mode:
-        runtimeAuthInput.session_auth_mode ?? session.session_auth_mode,
-      agent_api_key_env_var:
-        runtimeAuthInput.agent_api_key_env_var ?? session.agent_api_key_env_var,
-      local_cli_agent_id:
-        runtimeAuthInput.local_cli_agent_id ?? session.local_cli_agent_id,
-      agent_model: runtimeAuthInput.agent_model ?? session.agent_model,
-      agent_reasoning:
-        runtimeAuthInput.agent_reasoning ?? session.agent_reasoning,
-      agent_api_protocol:
-        runtimeAuthInput.agent_api_protocol ?? session.agent_api_protocol,
-      agent_api_version:
-        runtimeAuthInput.agent_api_version ?? session.agent_api_version,
-      agent_base_url: runtimeAuthInput.agent_base_url ?? session.agent_base_url,
-      agent_max_tokens:
-        runtimeAuthInput.agent_max_tokens ?? session.agent_max_tokens,
-      anthropic_api_key: runtimeAuthInput.anthropic_api_key,
-      local_cli_agent_env: runtimeAuthInput.local_cli_agent_env,
-    });
+    return resolveStoredSessionRuntimeAuthConfig(session, runtimeAuthInput);
   }
 
   /**
@@ -750,25 +732,10 @@ class ProcessManager {
 
     // Clean env: remove CLAUDECODE so child doesn't think it's nested
     const { CLAUDECODE: _, ...cleanEnv } = process.env;
-    const runtimeAuthConfig = resolveSessionRuntimeAuthConfig({
-      session_auth_mode:
-        runtimeAuthInput.session_auth_mode ?? session.session_auth_mode,
-      agent_api_key_env_var:
-        runtimeAuthInput.agent_api_key_env_var ?? session.agent_api_key_env_var,
-      local_cli_agent_id:
-        runtimeAuthInput.local_cli_agent_id ?? session.local_cli_agent_id,
-      agent_model: runtimeAuthInput.agent_model ?? session.agent_model,
-      agent_reasoning:
-        runtimeAuthInput.agent_reasoning ?? session.agent_reasoning,
-      agent_api_protocol:
-        runtimeAuthInput.agent_api_protocol ?? session.agent_api_protocol,
-      agent_api_version:
-        runtimeAuthInput.agent_api_version ?? session.agent_api_version,
-      agent_base_url: runtimeAuthInput.agent_base_url ?? session.agent_base_url,
-      agent_max_tokens:
-        runtimeAuthInput.agent_max_tokens ?? session.agent_max_tokens,
-      anthropic_api_key: runtimeAuthInput.anthropic_api_key,
-    });
+    const runtimeAuthConfig = resolveStoredSessionRuntimeAuthConfig(
+      session,
+      runtimeAuthInput,
+    );
     const launch = buildLocalCliProcessLaunch(
       runtimeAuthConfig,
       session.claude_session_id,

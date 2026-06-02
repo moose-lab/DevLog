@@ -7,6 +7,7 @@ import {
   DEFAULT_BASE_URL_BY_PROTOCOL,
   KNOWN_API_PROVIDERS,
   SUGGESTED_MODELS_BY_PROTOCOL,
+  buildSessionContinuationRuntimePayload,
   buildSessionRuntimePayload,
   buildStoredAgentSettings,
   getBrowserApiKeyScope,
@@ -318,6 +319,84 @@ test("browser API keys are scoped by protocol and base URL", () => {
 
   assert.equal(getScopedBrowserApiKey(anthropic, scopedKeys), "sk-ant-provider");
   assert.equal(getScopedBrowserApiKey(openai, scopedKeys), "sk-openai-provider");
+});
+
+test("session continuation payload preserves provider runtime and pulls its scoped browser key", () => {
+  const scopedKeys = setScopedBrowserApiKey(
+    {
+      apiProtocol: "openai",
+      apiBaseUrl: "https://api.openai.com/v1",
+    },
+    {},
+    "sk-openai-session",
+  );
+  const currentSettings = normalizeAgentSettings({
+    executionMode: "local-cli",
+    localCliAgentId: "codex",
+    localCliModel: "gpt-5-codex",
+  });
+
+  assert.deepEqual(
+    buildSessionContinuationRuntimePayload(
+      {
+        session_auth_mode: "anthropic-api-key",
+        agent_api_protocol: "openai",
+        agent_model: "gpt-4o-mini",
+        agent_base_url: "https://api.openai.com/v1",
+        agent_api_version: "",
+        agent_max_tokens: 16384,
+      },
+      currentSettings,
+      scopedKeys,
+    ),
+    {
+      session_auth_mode: "anthropic-api-key",
+      agent_api_protocol: "openai",
+      agent_model: "gpt-4o-mini",
+      agent_base_url: "https://api.openai.com/v1",
+      agent_api_version: "",
+      agent_max_tokens: 16384,
+      anthropic_api_key: "sk-openai-session",
+    },
+  );
+});
+
+test("session continuation payload preserves local CLI runtime and uses that CLI environment", () => {
+  const currentSettings = normalizeAgentSettings({
+    executionMode: "local-cli",
+    localCliAgentId: "codex",
+    localCliModel: "gpt-5-codex",
+    localCliAgentEnv: {
+      claude: {
+        CLAUDE_CONFIG_DIR: "/tmp/claude-session",
+      },
+      codex: {
+        CODEX_BIN: "/opt/dev/codex",
+      },
+    },
+  });
+
+  assert.deepEqual(
+    buildSessionContinuationRuntimePayload(
+      {
+        session_auth_mode: "local-cli",
+        local_cli_agent_id: "claude",
+        agent_model: "claude-opus-4-7",
+        agent_reasoning: "xhigh",
+      },
+      currentSettings,
+      {},
+    ),
+    {
+      session_auth_mode: "local-cli",
+      local_cli_agent_id: "claude",
+      agent_model: "claude-opus-4-7",
+      agent_reasoning: "xhigh",
+      local_cli_agent_env: {
+        CLAUDE_CONFIG_DIR: "/tmp/claude-session",
+      },
+    },
+  );
 });
 
 test("legacy model field migrates into split local CLI and API settings", () => {

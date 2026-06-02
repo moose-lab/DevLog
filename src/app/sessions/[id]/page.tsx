@@ -167,7 +167,11 @@ export default function SessionDetailPage() {
 
       {/* Tab content */}
       <div className={cn("flex-1 min-h-0", tab !== "chat" && "hidden")}>
-        <SessionChat sessionId={params.id} isActive={isActive} />
+        <SessionChat
+          sessionId={params.id}
+          isActive={isActive}
+          sessionRuntime={session}
+        />
       </div>
       <div className={cn("flex-1 min-h-0", tab !== "observe" && "hidden")}>
         <SessionVcc sessionId={params.id} isActive={isActive} />

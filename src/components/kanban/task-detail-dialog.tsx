@@ -94,7 +94,8 @@ export function TaskDetailDialog({
   const [selectedWorktree, setSelectedWorktree] = useState("");
   const [codingAgentId, setCodingAgentId] = useState(DEFAULT_CODING_AGENT_ID);
   const [agentTeamId, setAgentTeamId] = useState(DEFAULT_AGENT_TEAM_ID);
-  const { settings, runtimePayload, byokReady } = useAgentSettings();
+  const { settings, runtimePayload, byokReady, loaded, settingsReady } =
+    useAgentSettings();
 
   // Reset form when task changes
   useEffect(() => {
@@ -139,6 +140,8 @@ export function TaskDetailDialog({
   };
 
   const handleLaunch = async () => {
+    if (!settingsReady) return;
+
     const taskPrompt = prompt.trim() || task.prompt;
     if (!taskPrompt) return;
 
@@ -263,11 +266,11 @@ export function TaskDetailDialog({
           {/* Prompt */}
           {editing ? (
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Claude Code Prompt</Label>
+              <Label className="text-xs text-muted-foreground">Agent Prompt</Label>
               <Textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Prompt for Claude Code..."
+                placeholder="Prompt for the selected coding agent..."
                 rows={4}
                 className="resize-none font-mono text-xs"
               />
@@ -380,7 +383,9 @@ export function TaskDetailDialog({
               />
               <Button
                 onClick={handleLaunch}
-                disabled={launching || !(prompt.trim() || task.prompt) || !byokReady}
+                disabled={
+                  launching || !(prompt.trim() || task.prompt) || !settingsReady
+                }
                 size="sm"
                 className="w-full"
               >
@@ -389,6 +394,8 @@ export function TaskDetailDialog({
                     <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
                     Launching...
                   </>
+                ) : !loaded ? (
+                  <>Loading Settings...</>
                 ) : !byokReady ? (
                   <>Add API key in Settings</>
                 ) : (

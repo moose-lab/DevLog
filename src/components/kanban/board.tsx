@@ -21,14 +21,20 @@ const COLUMNS: TaskStatus[] = ["todo", "in_progress", "review", "blocked", "done
 export function KanbanBoard() {
   const { loading, tasksByStatus, createTask, updateTask, deleteTask, reorder, executeTask } = useTasks();
   const taskSessions = useTaskSessions();
-  const { runtimePayload, byokReady } = useAgentSettings();
+  const { runtimePayload, byokReady, loaded, settingsReady } = useAgentSettings();
   const router = useRouter();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 
   const handleExecuteTask = async (taskId: string) => {
+    if (!loaded) {
+      return;
+    }
     if (!byokReady) {
       router.push("/settings");
+      return;
+    }
+    if (!settingsReady) {
       return;
     }
     const result = await executeTask(taskId, runtimePayload);

@@ -85,3 +85,18 @@ test("getSessionInstructionInputCopy uses instruction-oriented copy for active s
     },
   );
 });
+
+test("getSessionInstructionInputCopy blocks session follow-up when selected runtime is not ready", () => {
+  assert.deepEqual(
+    getSessionInstructionInputCopy({
+      processing: false,
+      sessionEnded: false,
+      runtimeReady: false,
+    }),
+    {
+      placeholder: "",
+      helperText: "",
+      disabledText: "Add API key in Settings",
+    },
+  );
+});

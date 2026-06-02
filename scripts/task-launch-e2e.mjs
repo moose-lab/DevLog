@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 
+import {
+  buildTaskLaunchRuntimePayload,
+  describeTaskLaunchRuntimePayload,
+} from "./task-launch-e2e-config.mjs";
+
 const baseUrl = (process.env.DEVLOG_E2E_BASE_URL ?? "http://localhost:3000")
   .replace(/\/$/, "");
 const projectId = process.env.DEVLOG_E2E_PROJECT_ID ?? "devlog";
@@ -8,10 +13,7 @@ const codingAgentId =
   process.env.DEVLOG_E2E_CODING_AGENT_ID ?? "general-coding-agent";
 const agentTeamId =
   process.env.DEVLOG_E2E_AGENT_TEAM_ID ?? "implementation-review-team";
-const sessionAuthMode =
-  process.env.DEVLOG_E2E_AUTH_MODE ?? "backend-oauth";
-const agentApiKeyEnvVar =
-  process.env.DEVLOG_E2E_AGENT_API_KEY_ENV_VAR ?? "ANTHROPIC_API_KEY";
+const runtimePayload = buildTaskLaunchRuntimePayload(process.env);
 
 const startedAt = Date.now();
 const marker = `DEVLOG_E2E_${Date.now()}`;
@@ -92,6 +94,7 @@ async function watchSse(sessionId, evidence, signal) {
 
 async function main() {
   console.log(`DevLog task launch E2E against ${baseUrl} project=${projectId}`);
+  console.log(`runtime ${describeTaskLaunchRuntimePayload(runtimePayload)}`);
 
   const task = await request("/api/tasks", {
     method: "POST",
@@ -114,8 +117,7 @@ async function main() {
     body: JSON.stringify({
       coding_agent_id: codingAgentId,
       agent_team_id: agentTeamId,
-      session_auth_mode: sessionAuthMode,
-      agent_api_key_env_var: agentApiKeyEnvVar,
+      ...runtimePayload,
     }),
   });
   const session = launched.session;
@@ -147,6 +149,7 @@ async function main() {
         "Human follow-up E2E instruction.",
         `Reply with exactly ${followupAck}.`,
       ].join(" "),
+      ...runtimePayload,
     }),
   });
   if (!("queue_length" in patched) || !("is_processing" in patched)) {
@@ -164,7 +167,7 @@ async function main() {
       .join("\n");
     if (/Failed to authenticate|API Error/i.test(assistantText)) {
       throw new Error(
-        "Claude session authentication failed. Use backend OAuth on a logged-in Claude Code runtime or set DEVLOG_E2E_AUTH_MODE=agent-api-key with a backend env var such as ANTHROPIC_API_KEY.",
+        "Session authentication failed. Use DEVLOG_E2E_AUTH_MODE=local-cli with a usable local coding agent, DEVLOG_E2E_AUTH_MODE=anthropic-api-key with DEVLOG_E2E_API_KEY, or explicitly use DEVLOG_E2E_AUTH_MODE=agent-api-key with a backend env var such as ANTHROPIC_API_KEY.",
       );
     }
     if (assistantText.includes(followupAck)) return rows;

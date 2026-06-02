@@ -350,6 +350,23 @@ export function resolveSessionRuntimeAuthConfig(
   };
 }
 
+export function resolveStoredSessionRuntimeAuthConfig(
+  stored: SessionRuntimeAuthInput = {},
+  transientInput: SessionRuntimeAuthInput = {},
+): SessionRuntimeAuthConfig {
+  const {
+    anthropic_api_key: _storedApiKey,
+    local_cli_agent_env: _storedLocalCliEnv,
+    ...persistedInput
+  } = stored;
+
+  return resolveSessionRuntimeAuthConfig({
+    ...persistedInput,
+    anthropic_api_key: transientInput.anthropic_api_key,
+    local_cli_agent_env: transientInput.local_cli_agent_env,
+  });
+}
+
 export function buildSessionRuntimeAuthInstructions(
   config: SessionRuntimeAuthConfig,
 ): string {
@@ -373,6 +390,12 @@ export function buildSessionRuntimeAuthInstructions(
       ? ""
       : `; reasoning ${config.reasoning}`;
   return `Runtime execution: Local code-agent CLI (${config.localCliAgentName}); ${modelText}${reasoningText}.`;
+}
+
+export function getPersistedSessionBaseUrl(
+  config: SessionRuntimeAuthConfig,
+): string {
+  return config.baseUrl ?? DEFAULT_BASE_URL_BY_PROTOCOL[config.apiProtocol];
 }
 
 export function buildClaudeProcessEnv(

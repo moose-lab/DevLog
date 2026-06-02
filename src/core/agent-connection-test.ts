@@ -72,7 +72,7 @@ export interface AgentConnectionTestOptions {
 
 const SMOKE_PROMPT = "Reply with only: ok";
 const DEFAULT_PROVIDER_TIMEOUT_MS = 12_000;
-const DEFAULT_AGENT_TIMEOUT_MS = 45_000;
+export const DEFAULT_AGENT_TIMEOUT_MS = 180_000;
 const TEST_ALLOWED_TOOLS = ["Read", "Glob", "Grep"];
 
 function elapsed(start: number): number {
@@ -132,6 +132,13 @@ function extractTextFromJsonEvent(value: unknown): string {
     return value.map(extractTextFromJsonEvent).join("");
   }
   const record = value as Record<string, unknown>;
+  if (record.type === "error") return "";
+  if (record.type === "item.completed") {
+    const item = record.item as Record<string, unknown> | undefined;
+    if (item?.type === "agent_message" && typeof item.text === "string") {
+      return item.text;
+    }
+  }
   const direct = record.text ?? record.deltaContent ?? record.content;
   if (typeof direct === "string") return direct;
   if (record.type === "assistant.message_delta") {
