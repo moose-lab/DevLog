@@ -17,6 +17,10 @@ import {
   getPersistedSessionBaseUrl,
   resolveSessionRuntimeAuthConfig,
 } from "@/core/session-runtime-auth";
+import {
+  markSessionFailedAndReleaseLinkedTask,
+  validateTaskSessionLaunch,
+} from "@/core/task-lifecycle";
 import type { Session } from "@/core/types-dashboard";
 
 export async function GET(req: NextRequest) {
@@ -51,6 +55,16 @@ export async function POST(req: NextRequest) {
   if (!worktree_path) {
     return NextResponse.json({ error: "worktree_path is required" }, { status: 400 });
   }
+  const taskId =
+    typeof task_id === "string" && task_id.trim().length > 0
+      ? task_id.trim()
+      : null;
+  if (task_id != null && !taskId) {
+    return NextResponse.json(
+      { error: "task_id must be a non-empty string" },
+      { status: 400 },
+    );
+  }
 
   const id = randomBytes(8).toString("hex");
   const agentConfig = resolveAgentExecutionConfig(
@@ -64,6 +78,15 @@ export async function POST(req: NextRequest) {
   );
   if (!preflight.ok) {
     return NextResponse.json({ error: preflight.error }, { status: 400 });
+  }
+  if (taskId) {
+    const taskLaunch = validateTaskSessionLaunch(db, taskId, projectId);
+    if (!taskLaunch.ok) {
+      return NextResponse.json(
+        { error: taskLaunch.error },
+        { status: taskLaunch.status },
+      );
+    }
   }
   const sessionPrompt = [
     String(prompt).trim(),
@@ -88,7 +111,7 @@ export async function POST(req: NextRequest) {
     .get(
       id,
       projectId,
-      task_id ?? null,
+      taskId,
       worktree_name ?? null,
       worktree_path,
       branch_name ?? null,
@@ -107,11 +130,10 @@ export async function POST(req: NextRequest) {
     ) as Session;
 
   // Link session to task if provided
-  if (task_id) {
-    db.prepare("UPDATE tasks SET session_id = ?, status = 'in_progress' WHERE id = ?").run(
-      id,
-      task_id
-    );
+  if (taskId) {
+    db.prepare(
+      "UPDATE tasks SET session_id = ?, status = 'in_progress', fail_reason = NULL, completed_at = NULL, updated_at = datetime('now') WHERE id = ? AND project_id = ?",
+    ).run(id, taskId, projectId);
   }
 
   // Send the initial prompt as the first turn
@@ -119,9 +141,11 @@ export async function POST(req: NextRequest) {
     // Don't await — let it process in the background
     processManager.sendMessage(id, sessionPrompt, runtimeAuthInput);
   } catch (err) {
-    db.prepare(
-      "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?"
-    ).run(id);
+    markSessionFailedAndReleaseLinkedTask(
+      db,
+      id,
+      `Failed to start: ${(err as Error).message}`,
+    );
     return NextResponse.json(
       { error: `Failed to start: ${(err as Error).message}` },
       { status: 500 }

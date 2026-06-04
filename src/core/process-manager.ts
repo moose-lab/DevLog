@@ -9,7 +9,10 @@ import {
   type SystemLogLevel,
   type ToolCall,
 } from "./stream-manager";
-import { onSessionExit } from "./task-lifecycle";
+import {
+  markSessionFailedAndReleaseLinkedTask,
+  onSessionExit,
+} from "./task-lifecycle";
 import {
   buildClaudeProcessEnv,
   DEFAULT_AGENT_MODEL,
@@ -575,9 +578,7 @@ class ProcessManager {
 
         try {
           const db = getDb();
-          db.prepare(
-            "UPDATE sessions SET status = 'failed', pid = NULL, ended_at = datetime('now') WHERE id = ?",
-          ).run(sessionId);
+          markSessionFailedAndReleaseLinkedTask(db, sessionId, message);
         } catch {
           // ignore
         }
@@ -747,9 +748,7 @@ class ProcessManager {
       session.worktree_path,
     );
     if (!launch.ok) {
-      db.prepare(
-        "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?",
-      ).run(sessionId);
+      markSessionFailedAndReleaseLinkedTask(db, sessionId, launch.error);
       streamManager.emit(sessionId, {
         type: "error",
         message: launch.error,
@@ -763,9 +762,7 @@ class ProcessManager {
       runtimeAuthConfig,
     );
     if (!processEnv.ok) {
-      db.prepare(
-        "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?",
-      ).run(sessionId);
+      markSessionFailedAndReleaseLinkedTask(db, sessionId, processEnv.error);
       streamManager.emit(sessionId, {
         type: "error",
         message: processEnv.error,
@@ -815,9 +812,7 @@ class ProcessManager {
       this.sessions.delete(sessionId);
       const message = `Failed to start ${launch.agentName} process: ${err.message}`;
       try {
-        db.prepare(
-          "UPDATE sessions SET status = 'failed', pid = NULL, ended_at = datetime('now') WHERE id = ?",
-        ).run(sessionId);
+        markSessionFailedAndReleaseLinkedTask(db, sessionId, message);
       } catch {
         // ignore
       }
@@ -1046,11 +1041,7 @@ class ProcessManager {
       const message =
         error instanceof Error ? error.message : "Provider session failed.";
       try {
-        getDb()
-          .prepare(
-            "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?",
-          )
-          .run(sessionId);
+        markSessionFailedAndReleaseLinkedTask(getDb(), sessionId, message);
       } catch {
         // ignore
       }
@@ -1718,9 +1709,11 @@ class ProcessManager {
       const db = getDb();
       try {
         if (isError) {
-          db.prepare(
-            "UPDATE sessions SET status = 'failed', pid = NULL, ended_at = datetime('now') WHERE id = ? AND status = 'running'"
-          ).run(sessionId);
+          markSessionFailedAndReleaseLinkedTask(
+            db,
+            sessionId,
+            "Agent reported an error for this turn.",
+          );
         } else {
           db.prepare(
             "UPDATE sessions SET status = 'idle' WHERE id = ? AND status = 'running'"

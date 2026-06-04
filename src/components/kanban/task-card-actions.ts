@@ -1,9 +1,10 @@
 import { isActiveSessionStatus } from "@/core/task-readiness";
+import { isTaskExecutableStatus } from "@/core/task-status-flow";
 import type { Session, Task } from "@/core/types-dashboard";
 
 export function canExecuteTaskFromCard(task: Task, session?: Session): boolean {
   return (
-    (task.status === "todo" || task.status === "blocked") &&
+    isTaskExecutableStatus(task.status) &&
     !isActiveSessionStatus(session?.status)
   );
 }

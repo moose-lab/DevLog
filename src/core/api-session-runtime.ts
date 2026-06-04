@@ -9,6 +9,7 @@ import {
   resolveStoredSessionRuntimeAuthConfig,
   type SessionRuntimeAuthInput,
 } from "./session-runtime-auth";
+import { markSessionFailedAndReleaseLinkedTask } from "./task-lifecycle";
 import type { ChatStreamEvent } from "./stream-manager";
 
 export interface ProviderSessionTurnOptions {
@@ -68,9 +69,7 @@ export async function runProviderSessionTurn({
 
   const validated = validateProviderRuntimeConfig(runtimeAuthConfig);
   if (!validated.ok) {
-    db.prepare(
-      "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?",
-    ).run(sessionId);
+    markSessionFailedAndReleaseLinkedTask(db, sessionId, validated.error);
     emit(sessionId, { type: "error", message: validated.error });
     emit(sessionId, { type: "status", status: "failed" });
     return { ok: false, error: validated.error };
@@ -108,9 +107,7 @@ export async function runProviderSessionTurn({
   });
 
   if (!result.ok) {
-    db.prepare(
-      "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?",
-    ).run(sessionId);
+    markSessionFailedAndReleaseLinkedTask(db, sessionId, result.error);
     emit(sessionId, { type: "error", message: result.error });
     emit(sessionId, { type: "status", status: "failed" });
     return { ok: false, error: result.error };

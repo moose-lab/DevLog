@@ -9,6 +9,7 @@ import {
   validateSessionRuntimeProcessLaunch,
 } from "@/core/process-manager";
 import { compileSession } from "@/core/vcc";
+import { markSessionFailedAndReleaseLinkedTask } from "@/core/task-lifecycle";
 import { buildTaskRetryPrompt } from "@/core/task-retry";
 import {
   getAgentExecutionInputFromPayload,
@@ -152,16 +153,18 @@ export async function POST(
 
   // 6. Update task
   db.prepare(
-    "UPDATE tasks SET status = 'in_progress', session_id = ?, updated_at = datetime('now') WHERE id = ?"
+    "UPDATE tasks SET status = 'in_progress', session_id = ?, fail_reason = NULL, completed_at = NULL, updated_at = datetime('now') WHERE id = ?"
   ).run(sessionId, taskId);
 
   // 7. Spawn agent
   try {
     processManager.sendMessage(sessionId, retryPrompt, runtimeAuthInput);
   } catch (err) {
-    db.prepare(
-      "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?"
-    ).run(sessionId);
+    markSessionFailedAndReleaseLinkedTask(
+      db,
+      sessionId,
+      `Failed to start: ${(err as Error).message}`,
+    );
     return NextResponse.json(
       { error: `Failed to start: ${(err as Error).message}` },
       { status: 500 }

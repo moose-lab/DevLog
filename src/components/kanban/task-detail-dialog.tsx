@@ -28,6 +28,7 @@ import {
   Loader2,
   GitBranch,
   Terminal,
+  AlertCircle,
 } from "lucide-react";
 import {
   DEFAULT_AGENT_TEAM_ID,
@@ -35,6 +36,7 @@ import {
 } from "@/core/agent-presets";
 import { AgentSelector } from "@/components/sessions/agent-selector";
 import { useAgentSettings } from "@/hooks/use-agent-settings";
+import { isTaskExecutableStatus } from "@/core/task-status-flow";
 import type { SessionRuntimeAuthInput } from "@/core/session-runtime-auth";
 import type { Task, TaskPriority, TaskStatus, Worktree } from "@/core/types-dashboard";
 import { cn } from "@/core/dashboard-utils";
@@ -177,6 +179,7 @@ export function TaskDetailDialog({
     if (!dateStr) return null;
     return new Date(dateStr).toLocaleString();
   };
+  const canLaunchSession = isTaskExecutableStatus(task.status);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -320,6 +323,13 @@ export function TaskDetailDialog({
             </Button>
           )}
 
+          {task.status === "fail" && task.fail_reason && (
+            <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span className="whitespace-pre-wrap">{task.fail_reason}</span>
+            </div>
+          )}
+
           {/* Metadata */}
           <div className="border-t pt-3 space-y-2">
             {task.worktree_name && (
@@ -356,7 +366,7 @@ export function TaskDetailDialog({
           </div>
 
           {/* Launch session */}
-          {!task.session_id && task.status !== "done" && (
+          {canLaunchSession && (
             <div className="border-t pt-3 space-y-3">
               <Label className="text-xs text-muted-foreground">Launch Session from Task</Label>
               {worktrees.length > 1 && (

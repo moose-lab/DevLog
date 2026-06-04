@@ -195,12 +195,20 @@ test("runProviderSessionTurn keeps the user message when the provider returns an
   const events: ChatStreamEvent[] = [];
 
   db.prepare(
+    `INSERT INTO tasks (
+      id, project_id, title, status, session_id, prompt
+    ) VALUES (
+      'task-provider-error', 'test', 'Provider task', 'in_progress',
+      'session-provider-error', 'Run provider task'
+    )`,
+  ).run();
+  db.prepare(
     `INSERT INTO sessions (
-      id, project_id, worktree_path, status, session_auth_mode,
+      id, project_id, task_id, worktree_path, status, session_auth_mode,
       local_cli_agent_id, agent_model, agent_reasoning, agent_api_protocol,
       agent_api_version, agent_base_url, agent_max_tokens
     ) VALUES (
-      'session-provider-error', 'test', '/repo', 'idle', 'anthropic-api-key',
+      'session-provider-error', 'test', 'task-provider-error', '/repo', 'idle', 'anthropic-api-key',
       'claude', 'gpt-4o-mini', 'default', 'openai', '', 'https://api.openai.com/v1', 16384
     )`,
   ).run();
@@ -243,6 +251,16 @@ test("runProviderSessionTurn keeps the user message when the provider returns an
         .get("session-provider-error") as { status: string }
     ).status,
     "failed",
+  );
+  assert.deepEqual(
+    db
+      .prepare("SELECT status, session_id, fail_reason FROM tasks WHERE id = ?")
+      .get("task-provider-error"),
+    {
+      status: "fail",
+      session_id: "session-provider-error",
+      fail_reason: "provider unavailable",
+    },
   );
 });
 
