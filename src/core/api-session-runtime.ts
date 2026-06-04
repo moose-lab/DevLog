@@ -100,7 +100,12 @@ export async function runProviderSessionTurn({
     };
   }
 
-  emit(sessionId, { type: "message", role: "user", content: message });
+  emit(sessionId, {
+    type: "message",
+    id: Number(insertedUser.lastInsertRowid),
+    role: "user",
+    content: message,
+  });
 
   if (!result.ok) {
     db.prepare(
@@ -111,12 +116,13 @@ export async function runProviderSessionTurn({
     return { ok: false, error: result.error };
   }
 
-  db.prepare(
+  const insertedAssistant = db.prepare(
     "INSERT INTO session_messages (session_id, role, content) VALUES (?, 'assistant', ?)",
   ).run(sessionId, result.content);
   emit(sessionId, { type: "text_delta", text: result.content });
   emit(sessionId, {
     type: "message",
+    id: Number(insertedAssistant.lastInsertRowid),
     role: "assistant",
     content: result.content,
   });

@@ -527,7 +527,7 @@ class ProcessManager {
     watchdog.unref?.();
   }
 
-  private emitGlobalSystemLog(
+  private emitSystemLog(
     level: SystemLogLevel,
     sessionId: string,
     message: string,
@@ -535,6 +535,10 @@ class ProcessManager {
   ): void {
     streamManager.emit(
       "global",
+      createSystemLogEvent({ level, prefix, sessionId, message })
+    );
+    streamManager.emit(
+      sessionId,
       createSystemLogEvent({ level, prefix, sessionId, message })
     );
   }
@@ -560,7 +564,7 @@ class ProcessManager {
       if (cannotRestartWithoutBrowserKey) {
         const message =
           "BYOK session became unresponsive and cannot be restarted because DevLog does not store browser-provided API keys. Re-enter the key in Settings and start a new turn.";
-        this.emitGlobalSystemLog("warning", sessionId, message, "[WATCHDOG]");
+        this.emitSystemLog("warning", sessionId, message, "[WATCHDOG]");
 
         try {
           sp.proc.kill("SIGKILL");
@@ -583,7 +587,7 @@ class ProcessManager {
         continue;
       }
 
-      this.emitGlobalSystemLog(
+      this.emitSystemLog(
         "warning",
         sessionId,
         `Session ${sessionId.slice(0, 8)} unresponsive for 3m. Restarting...`,
@@ -751,7 +755,7 @@ class ProcessManager {
         message: launch.error,
       });
       streamManager.emit(sessionId, { type: "status", status: "failed" });
-      this.emitGlobalSystemLog("warning", sessionId, launch.error);
+      this.emitSystemLog("warning", sessionId, launch.error);
       return null;
     }
     const processEnv = buildClaudeProcessEnv(
@@ -767,7 +771,7 @@ class ProcessManager {
         message: processEnv.error,
       });
       streamManager.emit(sessionId, { type: "status", status: "failed" });
-      this.emitGlobalSystemLog("warning", sessionId, processEnv.error);
+      this.emitSystemLog("warning", sessionId, processEnv.error);
       return null;
     }
     const env = processEnv.env;
@@ -801,7 +805,7 @@ class ProcessManager {
     };
 
     this.sessions.set(sessionId, sp);
-    this.emitGlobalSystemLog(
+    this.emitSystemLog(
       "info",
       sessionId,
       `Session ${sessionId.slice(0, 8)} process started with ${launch.agentName}`
@@ -819,7 +823,7 @@ class ProcessManager {
       }
       streamManager.emit(sessionId, { type: "error", message });
       streamManager.emit(sessionId, { type: "status", status: "failed" });
-      this.emitGlobalSystemLog("warning", sessionId, message);
+      this.emitSystemLog("warning", sessionId, message);
     });
 
     proc.stdin?.on("error", (err: NodeJS.ErrnoException) => {
@@ -862,14 +866,24 @@ class ProcessManager {
         const text = chunk.toString().trim();
         if (text) {
           // Log stderr but don't surface as errors unless critical
+          let logId: number | undefined;
+          const timestamp = new Date().toISOString();
           try {
             const db = getDb();
-            db.prepare(
+            const result = db.prepare(
               "INSERT INTO session_logs (session_id, chunk, stream) VALUES (?, ?, 'stderr')"
             ).run(sessionId, text);
+            logId = Number(result.lastInsertRowid);
           } catch {
             // ignore
           }
+          streamManager.emit(sessionId, {
+            type: "log",
+            id: logId,
+            stream: "stderr",
+            chunk: text,
+            timestamp,
+          });
         }
       });
     }
@@ -878,7 +892,7 @@ class ProcessManager {
     proc.on("close", (code) => {
       this.flushGenericOutput(sessionId, sp);
       this.sessions.delete(sessionId);
-      this.emitGlobalSystemLog(
+      this.emitSystemLog(
         code === 0 ? "success" : "warning",
         sessionId,
         `Session ${sessionId.slice(0, 8)} process exited with code ${code ?? "unknown"}`
@@ -1026,7 +1040,7 @@ class ProcessManager {
       });
       ok = result.ok;
       if (!result.ok) {
-        this.emitGlobalSystemLog("warning", sessionId, result.error);
+        this.emitSystemLog("warning", sessionId, result.error);
       }
     } catch (error) {
       const message =
@@ -1042,7 +1056,7 @@ class ProcessManager {
       }
       streamManager.emit(sessionId, { type: "error", message });
       streamManager.emit(sessionId, { type: "status", status: "failed" });
-      this.emitGlobalSystemLog("warning", sessionId, message);
+      this.emitSystemLog("warning", sessionId, message);
     } finally {
       this.providerProcessing.delete(sessionId);
       if (ok) {
@@ -1060,13 +1074,15 @@ class ProcessManager {
     const db = getDb();
 
     // Record user message in DB
-    db.prepare(
+    const insertResult = db.prepare(
       "INSERT INTO session_messages (session_id, role, content) VALUES (?, 'user', ?)"
     ).run(sp.sessionId, message);
+    const messageId = Number(insertResult.lastInsertRowid);
 
     // Emit to stream subscribers
     streamManager.emit(sp.sessionId, {
       type: "message",
+      id: messageId,
       role: "user",
       content: message,
     });
@@ -1284,6 +1300,28 @@ class ProcessManager {
     const type = event.type;
     const item = event.item as Record<string, unknown> | undefined;
 
+    if (type === "thread.started") {
+      const codexThreadId = this.getCodexThreadId(event);
+      this.emitSystemLog(
+        "info",
+        sessionId,
+        codexThreadId
+          ? `Codex thread started: ${codexThreadId}`
+          : "Codex thread started",
+      );
+      return true;
+    }
+
+    if (type === "turn.started") {
+      this.emitSystemLog("info", sessionId, "Codex turn started");
+      return true;
+    }
+
+    if (type === "turn.completed") {
+      this.emitSystemLog("success", sessionId, "Codex turn completed");
+      return true;
+    }
+
     if (
       type === "item.started" &&
       item?.type === "command_execution" &&
@@ -1338,11 +1376,22 @@ class ProcessManager {
       return true;
     }
 
-    return (
-      type === "thread.started" ||
-      type === "turn.started" ||
-      type === "turn.completed"
-    );
+    return false;
+  }
+
+  private getCodexThreadId(event: Record<string, unknown>): string | null {
+    const directId =
+      typeof event.thread_id === "string"
+        ? event.thread_id
+        : typeof event.threadId === "string"
+          ? event.threadId
+          : typeof event.session_id === "string"
+            ? event.session_id
+            : null;
+    if (directId) return directId;
+
+    const thread = isRecord(event.thread) ? event.thread : null;
+    return typeof thread?.id === "string" ? thread.id : null;
   }
 
   private handleGeminiEvent(
@@ -1724,7 +1773,7 @@ class ProcessManager {
   /** Kill the active process for a session */
   kill(sessionId: string): boolean {
     const sp = this.sessions.get(sessionId);
-    this.emitGlobalSystemLog(
+    this.emitSystemLog(
       "warning",
       sessionId,
       `Session ${sessionId.slice(0, 8)} kill requested`
@@ -1753,7 +1802,7 @@ class ProcessManager {
       "UPDATE sessions SET status = 'killed', ended_at = datetime('now') WHERE id = ?"
     ).run(sessionId);
     streamManager.emit(sessionId, { type: "status", status: "killed" });
-    this.emitGlobalSystemLog(
+    this.emitSystemLog(
       "warning",
       sessionId,
       `Session ${sessionId.slice(0, 8)} killed`
@@ -1765,7 +1814,7 @@ class ProcessManager {
   /** Pause the active process for a session without ending the session */
   pause(sessionId: string): boolean {
     const sp = this.sessions.get(sessionId);
-    this.emitGlobalSystemLog(
+    this.emitSystemLog(
       "info",
       sessionId,
       `Session ${sessionId.slice(0, 8)} pause requested`
@@ -1782,7 +1831,7 @@ class ProcessManager {
       "UPDATE sessions SET status = 'paused' WHERE id = ? AND status NOT IN ('completed', 'killed')"
     ).run(sessionId);
     streamManager.emit(sessionId, { type: "status", status: "paused" });
-    this.emitGlobalSystemLog(
+    this.emitSystemLog(
       "info",
       sessionId,
       `Session ${sessionId.slice(0, 8)} paused`
@@ -1793,7 +1842,7 @@ class ProcessManager {
 
   /** End a session (mark completed, no more turns) */
   endSession(sessionId: string): void {
-    this.emitGlobalSystemLog(
+    this.emitSystemLog(
       "info",
       sessionId,
       `Session ${sessionId.slice(0, 8)} completion requested`
@@ -1804,7 +1853,7 @@ class ProcessManager {
       "UPDATE sessions SET status = 'completed', ended_at = datetime('now') WHERE id = ?"
     ).run(sessionId);
     streamManager.emit(sessionId, { type: "status", status: "completed" });
-    this.emitGlobalSystemLog(
+    this.emitSystemLog(
       "success",
       sessionId,
       `Session ${sessionId.slice(0, 8)} completed`

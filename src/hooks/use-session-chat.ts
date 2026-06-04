@@ -21,6 +21,15 @@ export interface PermissionRequest {
   toolInput: Record<string, unknown>;
 }
 
+export interface SessionActivityEntry {
+  id: number;
+  kind: "status" | "system" | "log";
+  level?: "info" | "success" | "warning" | "error";
+  stream?: "stdout" | "stderr";
+  message: string;
+  timestamp?: string;
+}
+
 interface StreamEvent {
   type: string;
   text?: string;
@@ -36,6 +45,13 @@ interface StreamEvent {
   status?: string;
   message?: string;
   session_id?: string;
+  stream?: "stdout" | "stderr";
+  chunk?: string;
+  timestamp?: string;
+  level?: "info" | "success" | "warning" | "error";
+  pid?: number;
+  started_at?: string;
+  ended_at?: string;
   // Permission events
   tool_name?: string;
   tool_input?: Record<string, unknown>;
@@ -49,6 +65,130 @@ interface StreamEvent {
 let _idCounter = 0;
 function nextId(): number {
   return ++_idCounter;
+}
+
+const ACTIVITY_ENTRY_LIMIT = 100;
+
+function capActivityEntries(
+  entries: SessionActivityEntry[],
+): SessionActivityEntry[] {
+  return entries.slice(Math.max(0, entries.length - ACTIVITY_ENTRY_LIMIT));
+}
+
+function withActivityId(
+  entry: Omit<SessionActivityEntry, "id">,
+): SessionActivityEntry {
+  return {
+    id: nextId(),
+    ...entry,
+  };
+}
+
+function getStatusActivityMessage(data: StreamEvent): string {
+  const status = data.status ?? "idle";
+  if (status === "running" && data.pid) {
+    return `Agent process running as PID ${data.pid}`;
+  }
+
+  if (data.message) {
+    return data.message;
+  }
+
+  switch (status) {
+    case "running":
+      return "Agent process running";
+    case "completed":
+      return "Agent process completed";
+    case "failed":
+      return "Agent process failed";
+    case "killed":
+      return "Agent process killed";
+    case "paused":
+      return "Agent process paused";
+    case "idle":
+      return "Agent process idle";
+    default:
+      return `Session status: ${status}`;
+  }
+}
+
+function getStatusActivityLevel(status: string | undefined): SessionActivityEntry["level"] {
+  switch (status) {
+    case "completed":
+      return "success";
+    case "failed":
+      return "error";
+    case "killed":
+    case "paused":
+      return "warning";
+    default:
+      return "info";
+  }
+}
+
+function getActivityEntryFromEvent(
+  data: StreamEvent,
+): Omit<SessionActivityEntry, "id"> | null {
+  switch (data.type) {
+    case "status": {
+      const status = data.status ?? "idle";
+      return {
+        kind: "status",
+        level: getStatusActivityLevel(status),
+        message: getStatusActivityMessage(data),
+        timestamp: data.timestamp ?? data.started_at ?? data.ended_at,
+      };
+    }
+    case "log":
+      if (!data.chunk) return null;
+      return {
+        kind: "log",
+        stream: data.stream,
+        message: data.chunk,
+        timestamp: data.timestamp,
+      };
+    case "system_log":
+      if (!data.message) return null;
+      return {
+        kind: "system",
+        level: data.level ?? "info",
+        message: data.message,
+        timestamp: data.timestamp,
+      };
+    default:
+      return null;
+  }
+}
+
+export function mergeReplayMessagesWithQueuedPlaceholders(
+  replayMessages: ChatMsg[],
+  currentMessages: ChatMsg[],
+): ChatMsg[] {
+  const replayedUserContentCounts = new Map<string, number>();
+  for (const message of replayMessages) {
+    if (message.role !== "user") continue;
+    replayedUserContentCounts.set(
+      message.content,
+      (replayedUserContentCounts.get(message.content) ?? 0) + 1,
+    );
+  }
+
+  return [
+    ...replayMessages,
+    ...currentMessages.filter((message) => {
+      if (!message.isQueued) return false;
+
+      const replayedCount = replayedUserContentCounts.get(message.content) ?? 0;
+      if (replayedCount === 0) return true;
+
+      if (replayedCount === 1) {
+        replayedUserContentCounts.delete(message.content);
+      } else {
+        replayedUserContentCounts.set(message.content, replayedCount - 1);
+      }
+      return false;
+    }),
+  ];
 }
 
 export function useSessionChat(
@@ -75,14 +215,18 @@ export function useSessionChat(
   const [sessionStatus, setSessionStatus] = useState<string>("idle");
   const [error, setError] = useState<string | null>(null);
   const [turnCost, setTurnCost] = useState<number | undefined>();
+  const [activityEntries, setActivityEntries] = useState<SessionActivityEntry[]>([]);
 
   // Interactive session state
   const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null);
   const [queuedCount, setQueuedCount] = useState(0);
 
   const esRef = useRef<EventSource | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncedRef = useRef(false);
   const streamTextRef = useRef("");
+  const replayMessagesRef = useRef<ChatMsg[]>([]);
+  const replayActivityEntriesRef = useRef<SessionActivityEntry[]>([]);
   // Capture streaming tools in a ref for finalization
   const streamToolsRef = useRef<{ name: string; input: Record<string, unknown> }[]>([]);
   const streamToolResultsRef = useRef<{ name: string; output: string; is_error?: boolean }[]>([]);
@@ -102,9 +246,57 @@ export function useSessionChat(
     [loaded, settingsReady, isRuntimeReadyForSession, sessionRuntime],
   );
 
+  const appendActivityEntry = useCallback(
+    (entry: Omit<SessionActivityEntry, "id">) => {
+      setActivityEntries((prev) => capActivityEntries([...prev, withActivityId(entry)]));
+    },
+    [],
+  );
+
+  const updateStatusState = useCallback((data: StreamEvent) => {
+    const status = data.status ?? "idle";
+    setSessionStatus(status);
+    if (status === "running") {
+      setProcessing(true);
+    } else if (
+      status === "idle" ||
+      status === "paused" ||
+      status === "completed" ||
+      status === "failed" ||
+      status === "killed"
+    ) {
+      setProcessing(false);
+    }
+  }, []);
+
+  const handleActivityEvent = useCallback(
+    (data: StreamEvent): boolean => {
+      if (data.type === "status") {
+        updateStatusState(data);
+      }
+
+      const entry = getActivityEntryFromEvent(data);
+      if (entry) {
+        appendActivityEntry(entry);
+        return true;
+      }
+
+      return data.type === "status" || data.type === "log" || data.type === "system_log";
+    },
+    [appendActivityEntry, updateStatusState],
+  );
+
+  const clearReconnectTimeout = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+  }, []);
+
   // Connect SSE
   const connect = useCallback(() => {
     if (!sessionId) return;
+    clearReconnectTimeout();
 
     if (esRef.current) {
       esRef.current.close();
@@ -114,37 +306,63 @@ export function useSessionChat(
     const es = new EventSource(`/api/sessions/${sessionId}/stream`);
     esRef.current = es;
     syncedRef.current = false;
+    replayMessagesRef.current = [];
+    replayActivityEntriesRef.current = [];
 
-    es.onopen = () => setConnected(true);
+    es.onopen = () => {
+      if (esRef.current !== es) return;
+      setConnected(true);
+    };
 
     es.onmessage = (evt) => {
+      if (esRef.current !== es) return;
+
       try {
         const data = JSON.parse(evt.data) as StreamEvent;
 
         // Sync marker — replay complete
         if (data.type === "sync") {
+          setMessages((prev) =>
+            mergeReplayMessagesWithQueuedPlaceholders(
+              replayMessagesRef.current,
+              prev,
+            ),
+          );
+          setActivityEntries(capActivityEntries(replayActivityEntriesRef.current));
           syncedRef.current = true;
           return;
         }
 
-        // Replayed message (before sync)
-        if (!syncedRef.current && data.type === "message") {
-          if (data.role && data.content) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: nextId(),
-                role: data.role as "user" | "assistant",
-                content: data.content!,
-              },
+        // Replayed events (before sync)
+        if (!syncedRef.current) {
+          if (data.type === "message") {
+            if (data.role && data.content) {
+              replayMessagesRef.current = [
+                ...replayMessagesRef.current,
+                {
+                  id: nextId(),
+                  role: data.role as "user" | "assistant",
+                  content: data.content!,
+                },
+              ];
+            }
+            return;
+          }
+
+          if (data.type === "status") {
+            updateStatusState(data);
+          }
+          const entry = getActivityEntryFromEvent(data);
+          if (entry) {
+            replayActivityEntriesRef.current = capActivityEntries([
+              ...replayActivityEntriesRef.current,
+              withActivityId(entry),
             ]);
           }
           return;
         }
 
         // Live events (after sync)
-        if (!syncedRef.current) return;
-
         switch (data.type) {
           case "message":
             // User message echo from backend
@@ -183,6 +401,12 @@ export function useSessionChat(
               const newTool = { name: data.name, input: data.input ?? {} };
               streamToolsRef.current = [...streamToolsRef.current, newTool];
               setStreamingTools(streamToolsRef.current);
+              appendActivityEntry({
+                kind: "system",
+                level: "info",
+                message: `Started tool ${data.name}`,
+                timestamp: data.timestamp,
+              });
             }
             break;
 
@@ -195,6 +419,12 @@ export function useSessionChat(
               };
               streamToolResultsRef.current = [...streamToolResultsRef.current, newResult];
               setStreamingToolResults(streamToolResultsRef.current);
+              appendActivityEntry({
+                kind: "system",
+                level: data.is_error ? "error" : "success",
+                message: `Completed tool ${data.name}`,
+                timestamp: data.timestamp,
+              });
             }
             break;
 
@@ -266,12 +496,9 @@ export function useSessionChat(
             break;
 
           case "status":
-            setSessionStatus(data.status ?? "idle");
-            if (data.status === "running") {
-              setProcessing(true);
-            } else if (data.status === "idle" || data.status === "completed" || data.status === "killed") {
-              setProcessing(false);
-            }
+          case "log":
+          case "system_log":
+            handleActivityEvent(data);
             break;
         }
       } catch {
@@ -280,12 +507,20 @@ export function useSessionChat(
     };
 
     es.onerror = () => {
+      if (esRef.current !== es) return;
       setConnected(false);
       es.close();
       esRef.current = null;
-      setTimeout(connect, 3000);
+      clearReconnectTimeout();
+      reconnectTimeoutRef.current = setTimeout(connect, 3000);
     };
-  }, [sessionId]);
+  }, [
+    appendActivityEntry,
+    clearReconnectTimeout,
+    handleActivityEvent,
+    sessionId,
+    updateStatusState,
+  ]);
 
   useEffect(() => {
     setMessages([]);
@@ -294,20 +529,24 @@ export function useSessionChat(
     setStreamingToolResults([]);
     setError(null);
     setProcessing(false);
+    setActivityEntries([]);
     setPendingPermission(null);
     setQueuedCount(0);
     streamTextRef.current = "";
     streamToolsRef.current = [];
     streamToolResultsRef.current = [];
+    replayMessagesRef.current = [];
+    replayActivityEntriesRef.current = [];
     syncedRef.current = false;
 
     connect();
     return () => {
+      clearReconnectTimeout();
       esRef.current?.close();
       esRef.current = null;
       setConnected(false);
     };
-  }, [connect]);
+  }, [clearReconnectTimeout, connect]);
 
   // Send a follow-up message — always allowed, queued if processing
   const sendMessage = useCallback(
@@ -354,6 +593,7 @@ export function useSessionChat(
     sessionStatus,
     error,
     turnCost,
+    activityEntries,
     sendMessage,
     byokReady: continuationRuntimeReady,
     // Interactive session features

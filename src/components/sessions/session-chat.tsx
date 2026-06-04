@@ -5,6 +5,7 @@ import {
   useSessionChat,
   type ChatMsg,
   type PermissionRequest,
+  type SessionActivityEntry,
 } from "@/hooks/use-session-chat";
 import type { SessionContinuationRuntimeSnapshot } from "@/core/agent-settings";
 import type { SessionStatus } from "@/core/types-dashboard";
@@ -85,6 +86,34 @@ export function formatToolOutputForDisplay(output: string): string {
   return [...head, `... (truncated ${truncatedCount} lines)`, ...tail].join(
     "\n",
   );
+}
+
+export function formatActivityEntryForDisplay(entry: SessionActivityEntry): string {
+  if (entry.kind !== "log") {
+    return entry.message;
+  }
+
+  const stream = entry.stream ?? "stdout";
+  const trimmed = entry.message.trim();
+  const compact =
+    trimmed.length > 160 ? `${trimmed.slice(0, 160).trimEnd()}...` : trimmed;
+
+  return `[${stream}] ${compact}`;
+}
+
+export function formatActivityTimestampForDisplay(
+  timestamp: string | undefined,
+): string | null {
+  if (!timestamp) {
+    return null;
+  }
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toLocaleTimeString();
 }
 
 export function isInteractiveSessionStatus(
@@ -354,6 +383,57 @@ function StreamingBubble({
   );
 }
 
+function ActivityTimeline({ entries }: { entries: SessionActivityEntry[] }) {
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="px-4 py-2">
+      <div className="border-l border-border/60 pl-3 space-y-1.5">
+        {entries.map((entry) => {
+          const timestamp = formatActivityTimestampForDisplay(entry.timestamp);
+
+          return (
+            <div key={entry.id} className="flex min-w-0 items-start gap-2 text-xs">
+              <span
+                className={cn(
+                  "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border bg-background",
+                  entry.level === "success" && "border-green-500/40 text-green-500",
+                  entry.level === "warning" && "border-amber-500/40 text-amber-500",
+                  entry.level === "error" && "border-destructive/40 text-destructive",
+                  (!entry.level || entry.level === "info") &&
+                    "border-border text-muted-foreground",
+                )}
+              >
+                {entry.level === "success" ? (
+                  <Check className="h-2.5 w-2.5" />
+                ) : entry.level === "warning" || entry.level === "error" ? (
+                  <AlertCircle className="h-2.5 w-2.5" />
+                ) : entry.kind === "log" ? (
+                  <TerminalIcon className="h-2.5 w-2.5" />
+                ) : (
+                  <Loader2 className="h-2.5 w-2.5" />
+                )}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">
+                  {formatActivityEntryForDisplay(entry)}
+                </p>
+                {timestamp && (
+                  <p className="mt-0.5 text-[10px] text-muted-foreground/50">
+                    {timestamp}
+                  </p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // Main session chat component
 interface SessionChatProps {
   sessionId: string;
@@ -380,6 +460,7 @@ export function SessionChat({
     respondToPermission,
     queuedCount,
     byokReady,
+    activityEntries,
   } = useSessionChat(sessionId, sessionRuntime);
 
   const [input, setInput] = useState("");
@@ -402,7 +483,14 @@ export function SessionChat({
     if (autoScroll && bottomRef.current) {
       bottomRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages, streamingText, streamingTools, pendingPermission, autoScroll]);
+  }, [
+    messages,
+    streamingText,
+    streamingTools,
+    activityEntries,
+    pendingPermission,
+    autoScroll,
+  ]);
 
   const handleScroll = () => {
     const el = scrollRef.current;
@@ -481,7 +569,7 @@ export function SessionChat({
         onScroll={handleScroll}
         className="flex-1 min-h-0 overflow-y-auto py-4"
       >
-        {messages.length === 0 && !processing && (
+        {messages.length === 0 && activityEntries.length === 0 && !processing && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground mx-auto mb-2" />
@@ -495,6 +583,8 @@ export function SessionChat({
         {messages.map((msg) => (
           <MessageBubble key={msg.id} msg={msg} />
         ))}
+
+        <ActivityTimeline entries={activityEntries} />
 
         {/* Streaming response */}
         {processing && (

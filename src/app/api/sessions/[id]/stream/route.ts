@@ -1,7 +1,9 @@
 import { NextRequest } from "next/server";
 import { getDb } from "@/core/db";
+import { filterBufferedReplayDuplicates } from "@/core/session-stream-dedupe";
+import { buildSessionStreamReplayEvents } from "@/core/session-stream-replay";
 import { streamManager } from "@/core/stream-manager";
-import type { ChatMessage } from "@/core/types-dashboard";
+import type { ChatStreamEvent } from "@/core/stream-manager";
 
 export async function GET(
   _req: NextRequest,
@@ -10,63 +12,117 @@ export async function GET(
   const { id } = await params;
 
   const encoder = new TextEncoder();
+  let cleanupStream = () => {};
   const stream = new ReadableStream({
     start(controller) {
-      // Replay persisted messages so the frontend catches up
-      try {
-        const db = getDb();
-        const messages = db
-          .prepare(
-            "SELECT * FROM session_messages WHERE session_id = ? ORDER BY id ASC"
-          )
-          .all(id) as ChatMessage[];
+      const liveEventBuffer: ChatStreamEvent[] = [];
+      let bufferingLiveEvents = true;
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
+      let unsubscribe = () => {};
+      let cleanedUp = false;
+      let abortHandler: (() => void) | undefined;
 
-        for (const msg of messages) {
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: "message", role: msg.role, content: msg.content })}\n\n`
-            )
-          );
+      const cleanup = () => {
+        if (cleanedUp) {
+          return;
         }
-      } catch {
-        // DB might not be ready
-      }
-
-      // Signal replay complete
-      controller.enqueue(
-        encoder.encode(`data: ${JSON.stringify({ type: "sync" })}\n\n`)
-      );
-
-      // Subscribe to live events
-      const unsubscribe = streamManager.subscribe(id, (event) => {
-        try {
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
-          );
-        } catch {
-          unsubscribe();
-        }
-      });
-
-      // Heartbeat every 15s
-      const heartbeat = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(`: heartbeat\n\n`));
-        } catch {
+        cleanedUp = true;
+        if (heartbeat) {
           clearInterval(heartbeat);
-          unsubscribe();
         }
-      }, 15000);
-
-      _req.signal.addEventListener("abort", () => {
-        clearInterval(heartbeat);
+        if (abortHandler) {
+          _req.signal.removeEventListener("abort", abortHandler);
+        }
         unsubscribe();
+      };
+      cleanupStream = cleanup;
+
+      const safeEnqueue = (chunk: string) => {
+        try {
+          controller.enqueue(encoder.encode(chunk));
+          return true;
+        } catch {
+          cleanup();
+          return false;
+        }
+      };
+
+      const enqueueEvent = (event: ChatStreamEvent) => {
+        return safeEnqueue(`data: ${JSON.stringify(event)}\n\n`);
+      };
+
+      abortHandler = () => {
+        cleanup();
         try {
           controller.close();
         } catch {
           // already closed
         }
+      };
+      _req.signal.addEventListener("abort", abortHandler);
+
+      if (_req.signal.aborted) {
+        cleanup();
+        return;
+      }
+
+      // Subscribe before replay so live events are not lost during catch-up.
+      unsubscribe = streamManager.subscribe(id, (event) => {
+        if (bufferingLiveEvents) {
+          liveEventBuffer.push(event);
+          return;
+        }
+
+        enqueueEvent(event);
       });
+
+      if (_req.signal.aborted) {
+        cleanup();
+        return;
+      }
+
+      // Replay persisted messages so the frontend catches up
+      let replayEvents: ChatStreamEvent[] = [];
+      try {
+        const db = getDb();
+        replayEvents = buildSessionStreamReplayEvents(db, id);
+
+        for (const event of replayEvents) {
+          if (!enqueueEvent(event)) {
+            return;
+          }
+        }
+      } catch (error) {
+        // DB might not be ready
+        console.warn("Failed to replay session stream events", {
+          sessionId: id,
+          error,
+        });
+      }
+
+      // Signal replay complete
+      if (!safeEnqueue(`data: ${JSON.stringify({ type: "sync" })}\n\n`)) {
+        return;
+      }
+
+      const eventsToDrain = filterBufferedReplayDuplicates(
+        replayEvents,
+        liveEventBuffer,
+      );
+      for (const event of eventsToDrain) {
+        if (!enqueueEvent(event)) {
+          return;
+        }
+      }
+      bufferingLiveEvents = false;
+
+      // Heartbeat every 15s
+      heartbeat = setInterval(() => {
+        safeEnqueue(": heartbeat\n\n");
+      }, 15000);
+    },
+    cancel() {
+      cleanupStream();
     },
   });
 
