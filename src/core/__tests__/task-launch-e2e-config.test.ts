@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 const {
   buildTaskLaunchRuntimePayload,
+  describeTaskLaunchRuntimePayload,
 } = await import("../../../scripts/task-launch-e2e-config.mjs");
 
 function env(overrides: Record<string, string>): NodeJS.ProcessEnv {
@@ -66,4 +67,19 @@ test("task launch E2E keeps legacy backend env-var mode available explicitly", (
     agent_api_key_env_var: "ANTHROPIC_API_KEY",
     agent_model: "claude-sonnet-4-6",
   });
+});
+
+test("task launch E2E runtime description does not log secret env var names", () => {
+  const payload = buildTaskLaunchRuntimePayload(env({
+    DEVLOG_E2E_AUTH_MODE: "agent-api-key",
+    DEVLOG_E2E_AGENT_API_KEY_ENV_VAR: "ANTHROPIC_API_KEY",
+    DEVLOG_E2E_AGENT_MODEL: "claude-sonnet-4-6",
+  }));
+
+  const description = describeTaskLaunchRuntimePayload(payload);
+
+  assert.match(description, /mode=agent-api-key/);
+  assert.match(description, /keyEnv=configured/);
+  assert.doesNotMatch(description, /ANTHROPIC_API_KEY/);
+  assert.doesNotMatch(description, /agent_api_key_env_var/);
 });

@@ -42,19 +42,25 @@ export async function POST(req: NextRequest) {
     body = {};
   }
 
+  const bodyRecord =
+    body && typeof body === "object" && !Array.isArray(body)
+      ? (body as Record<string, unknown>)
+      : {};
   const {
     task_id,
     worktree_name,
     worktree_path,
     branch_name,
     prompt,
-  } = body as Record<string, unknown>;
-  if (!prompt) {
+  } = bodyRecord;
+  if (typeof prompt !== "string" || !prompt.trim()) {
     return NextResponse.json({ error: "prompt is required" }, { status: 400 });
   }
-  if (!worktree_path) {
+  if (typeof worktree_path !== "string" || !worktree_path.trim()) {
     return NextResponse.json({ error: "worktree_path is required" }, { status: 400 });
   }
+  const promptText = prompt.trim();
+  const worktreePath = worktree_path.trim();
   const taskId =
     typeof task_id === "string" && task_id.trim().length > 0
       ? task_id.trim()
@@ -68,13 +74,13 @@ export async function POST(req: NextRequest) {
 
   const id = randomBytes(8).toString("hex");
   const agentConfig = resolveAgentExecutionConfig(
-    getAgentExecutionInputFromPayload(body),
+    getAgentExecutionInputFromPayload(bodyRecord),
   );
-  const runtimeAuthInput = getSessionRuntimeAuthInputFromPayload(body);
+  const runtimeAuthInput = getSessionRuntimeAuthInputFromPayload(bodyRecord);
   const runtimeAuthConfig = resolveSessionRuntimeAuthConfig(runtimeAuthInput);
   const preflight = validateSessionRuntimeProcessLaunch(
     runtimeAuthConfig,
-    String(worktree_path),
+    worktreePath,
   );
   if (!preflight.ok) {
     return NextResponse.json({ error: preflight.error }, { status: 400 });
@@ -89,7 +95,7 @@ export async function POST(req: NextRequest) {
     }
   }
   const sessionPrompt = [
-    String(prompt).trim(),
+    promptText,
     "",
     "## Agent Execution",
     buildAgentExecutionInstructions(agentConfig),
@@ -112,9 +118,9 @@ export async function POST(req: NextRequest) {
       id,
       projectId,
       taskId,
-      worktree_name ?? null,
-      worktree_path,
-      branch_name ?? null,
+      typeof worktree_name === "string" ? worktree_name : null,
+      worktreePath,
+      typeof branch_name === "string" ? branch_name : null,
       agentConfig.codingAgent.id,
       agentConfig.agentTeam.id,
       runtimeAuthConfig.mode,

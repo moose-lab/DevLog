@@ -109,7 +109,7 @@ export function describeTaskLaunchRuntimePayload(payload) {
   if (payload.session_auth_mode === "agent-api-key") {
     return [
       "mode=agent-api-key",
-      `env=${payload.agent_api_key_env_var}`,
+      `keyEnv=${payload.agent_api_key_env_var ? "configured" : "missing"}`,
       `model=${payload.agent_model}`,
     ].join(" ");
   }

@@ -296,6 +296,7 @@ export function resolveSessionRuntimeAuthConfig(
   const localCliAgentValid =
     mode !== "local-cli" ||
     !input.local_cli_agent_id ||
+    !input.local_cli_agent_id.trim() ||
     input.local_cli_agent_id.trim() === localCliAgentId;
   const localCliAgent = findLocalCliAgent(localCliAgentId);
   const localCliAgentEnv =

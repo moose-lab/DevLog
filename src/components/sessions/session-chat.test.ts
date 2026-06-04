@@ -8,7 +8,10 @@ import {
   isInteractiveSessionStatus,
   isTerminalSessionStatus,
 } from "./session-chat";
-import { mergeReplayMessagesWithQueuedPlaceholders } from "@/hooks/use-session-chat";
+import {
+  createReplayChatMessage,
+  mergeReplayMessagesWithQueuedPlaceholders,
+} from "@/hooks/use-session-chat";
 
 test("formatToolOutputForDisplay keeps complete output up to 20 lines", () => {
   const output = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join(
@@ -97,6 +100,22 @@ test("formatActivityEntryForDisplay returns system warning and success messages"
 test("formatActivityTimestampForDisplay omits invalid timestamps", () => {
   assert.equal(formatActivityTimestampForDisplay(undefined), null);
   assert.equal(formatActivityTimestampForDisplay("not a timestamp"), null);
+});
+
+test("createReplayChatMessage preserves stable persisted message ids", () => {
+  assert.deepEqual(
+    createReplayChatMessage({
+      type: "message",
+      id: 42,
+      role: "assistant",
+      content: "persisted response",
+    }),
+    {
+      id: 42,
+      role: "assistant",
+      content: "persisted response",
+    },
+  );
 });
 
 test("mergeReplayMessagesWithQueuedPlaceholders drops queued messages already replayed as user messages", () => {

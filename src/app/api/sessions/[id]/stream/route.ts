@@ -3,6 +3,7 @@ import { getDb } from "@/core/db";
 import { filterBufferedReplayDuplicates } from "@/core/session-stream-dedupe";
 import { buildSessionStreamReplayEvents } from "@/core/session-stream-replay";
 import { streamManager } from "@/core/stream-manager";
+import { resolveProjectId } from "@/lib/api-utils";
 import type { ChatStreamEvent } from "@/core/stream-manager";
 
 export async function GET(
@@ -10,6 +11,15 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const projectId = resolveProjectId(_req);
+  const db = getDb();
+  const ownedSession = db
+    .prepare("SELECT 1 FROM sessions WHERE id = ? AND project_id = ? LIMIT 1")
+    .get(id, projectId);
+
+  if (!ownedSession) {
+    return new Response("Forbidden", { status: 403 });
+  }
 
   const encoder = new TextEncoder();
   let cleanupStream = () => {};
@@ -84,7 +94,6 @@ export async function GET(
       // Replay persisted messages so the frontend catches up
       let replayEvents: ChatStreamEvent[] = [];
       try {
-        const db = getDb();
         replayEvents = buildSessionStreamReplayEvents(db, id);
 
         for (const event of replayEvents) {

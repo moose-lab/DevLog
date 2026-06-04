@@ -37,6 +37,7 @@ test("filterBufferedReplayDuplicates removes live buffered events already covere
   assert.deepEqual(
     filterBufferedReplayDuplicates(replayEvents, bufferedEvents),
     [
+      { type: "status", status: "running" },
       { type: "message", id: 43, role: "user", content: "new prompt" },
       {
         type: "system_log",
@@ -59,5 +60,19 @@ test("filterBufferedReplayDuplicates keeps same-content messages when ids differ
   assert.deepEqual(
     filterBufferedReplayDuplicates(replayEvents, bufferedEvents),
     [{ type: "message", id: 43, role: "user", content: "continue" }],
+  );
+});
+
+test("filterBufferedReplayDuplicates preserves live status metadata updates", () => {
+  const replayEvents: ChatStreamEvent[] = [
+    { type: "status", status: "running", pid: 1001 },
+  ];
+  const bufferedEvents: ChatStreamEvent[] = [
+    { type: "status", status: "running", pid: 2002 },
+  ];
+
+  assert.deepEqual(
+    filterBufferedReplayDuplicates(replayEvents, bufferedEvents),
+    [{ type: "status", status: "running", pid: 2002 }],
   );
 });

@@ -23,7 +23,7 @@ function getReplayDedupeKey(event: ChatStreamEvent): string | null {
     case "log":
       return typeof event.id === "number" ? `log:${event.id}` : null;
     case "status":
-      return `status:${event.status}`;
+      return null;
     default:
       return null;
   }

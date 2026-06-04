@@ -70,6 +70,19 @@ test("local CLI mode resolves selected agent, model, and reasoning", () => {
   assert.equal(config.reasoning, "high");
 });
 
+test("whitespace-only local CLI agent id is treated as absent", () => {
+  const config = resolveSessionRuntimeAuthConfig({
+    session_auth_mode: "local-cli",
+    local_cli_agent_id: "   ",
+    agent_model: "gpt-5-codex",
+    agent_reasoning: "high",
+  });
+
+  assert.equal(config.localCliAgentId, "claude");
+  assert.equal(config.model, "gpt-5-codex");
+  assert.equal(config.reasoning, "high");
+});
+
 test("local CLI mode persists a non-null default base URL for session metadata", () => {
   const config = resolveSessionRuntimeAuthConfig({
     session_auth_mode: "local-cli",

@@ -126,3 +126,33 @@ test("dashboard task quick view forwards runtime payload from the detail dialog"
     "dashboard quick task launcher must forward runtime payload fields to /api/sessions",
   );
 });
+
+test("session stream route scopes subscriptions to the current project", () => {
+  const source = readRepoFile("src/app/api/sessions/[id]/stream/route.ts");
+
+  assert.match(
+    source,
+    /resolveProjectId/,
+    "session stream route must resolve the current project before opening SSE",
+  );
+  assert.match(
+    source,
+    /sessions\s+WHERE\s+id\s*=\s*\?\s+AND\s+project_id\s*=\s*\?/,
+    "session stream route must verify the session belongs to the current project",
+  );
+});
+
+test("sessions POST narrows arbitrary JSON before destructuring", () => {
+  const source = readRepoFile("src/app/api/sessions/route.ts");
+
+  assert.match(
+    source,
+    /bodyRecord/,
+    "sessions POST should keep a narrowed record for request body fields",
+  );
+  assert.doesNotMatch(
+    source,
+    /}\s*=\s*body\s+as\s+Record<string,\s*unknown>/,
+    "sessions POST should not destructure arbitrary JSON via a blind type cast",
+  );
+});

@@ -32,6 +32,7 @@ export interface SessionActivityEntry {
 
 interface StreamEvent {
   type: string;
+  id?: number;
   text?: string;
   name?: string;
   input?: Record<string, unknown>;
@@ -158,6 +159,18 @@ function getActivityEntryFromEvent(
     default:
       return null;
   }
+}
+
+export function createReplayChatMessage(data: StreamEvent): ChatMsg | null {
+  if (data.type !== "message" || !data.role || !data.content) {
+    return null;
+  }
+
+  return {
+    id: data.id ?? nextId(),
+    role: data.role as "user" | "assistant",
+    content: data.content,
+  };
 }
 
 export function mergeReplayMessagesWithQueuedPlaceholders(
@@ -336,14 +349,11 @@ export function useSessionChat(
         // Replayed events (before sync)
         if (!syncedRef.current) {
           if (data.type === "message") {
-            if (data.role && data.content) {
+            const replayMessage = createReplayChatMessage(data);
+            if (replayMessage) {
               replayMessagesRef.current = [
                 ...replayMessagesRef.current,
-                {
-                  id: nextId(),
-                  role: data.role as "user" | "assistant",
-                  content: data.content!,
-                },
+                replayMessage,
               ];
             }
             return;
