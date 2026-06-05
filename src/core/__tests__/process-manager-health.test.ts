@@ -491,6 +491,82 @@ test("generic JSON parser maps Copilot text and tool events", () => {
   ]);
 });
 
+test("generic JSON parser emits Codex lifecycle system logs on session stream", () => {
+  const sessionId = "test-codex-lifecycle-parser";
+  const events: ChatStreamEvent[] = [];
+  const unsubscribe = streamManager.subscribe(sessionId, (event) => {
+    events.push(event);
+  });
+  const sp: Record<string, unknown> = {
+    eventParser: "codex",
+    genericStreamState: {
+      buffer: "",
+      codexToolUses: new Set<string>(),
+      openCodeToolUses: new Set<string>(),
+      copilotToolNames: new Map<string, string>(),
+      cursorTextSoFar: "",
+    },
+    textBuffer: "",
+  };
+
+  try {
+    genericJsonLineProcess.handleGenericJsonLine(
+      sessionId,
+      sp,
+      JSON.stringify({
+        type: "thread.started",
+        thread: { id: "thread-nested" },
+      }),
+    );
+    genericJsonLineProcess.handleGenericJsonLine(
+      sessionId,
+      sp,
+      JSON.stringify({
+        type: "turn.started",
+      }),
+    );
+    genericJsonLineProcess.handleGenericJsonLine(
+      sessionId,
+      sp,
+      JSON.stringify({
+        type: "turn.completed",
+      }),
+    );
+  } finally {
+    unsubscribe();
+  }
+
+  const systemLogs = events.filter((event) => event.type === "system_log");
+  assert.deepEqual(
+    systemLogs.map((event) => ({
+      type: event.type,
+      level: event.level,
+      message: event.message,
+      session_id: event.session_id,
+    })),
+    [
+      {
+        type: "system_log",
+        level: "info",
+        message: "Codex thread started: thread-nested",
+        session_id: sessionId,
+      },
+      {
+        type: "system_log",
+        level: "info",
+        message: "Codex turn started",
+        session_id: sessionId,
+      },
+      {
+        type: "system_log",
+        level: "success",
+        message: "Codex turn completed",
+        session_id: sessionId,
+      },
+    ],
+  );
+});
+
 test("buildLocalCliProcessLaunch fails clearly when selected CLI is unavailable", () => {
   const launch = buildLocalCliProcessLaunch(
     resolveSessionRuntimeAuthConfig({

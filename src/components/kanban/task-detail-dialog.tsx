@@ -28,6 +28,7 @@ import {
   Loader2,
   GitBranch,
   Terminal,
+  AlertCircle,
 } from "lucide-react";
 import {
   DEFAULT_AGENT_TEAM_ID,
@@ -35,6 +36,7 @@ import {
 } from "@/core/agent-presets";
 import { AgentSelector } from "@/components/sessions/agent-selector";
 import { useAgentSettings } from "@/hooks/use-agent-settings";
+import { isTaskExecutableStatus } from "@/core/task-status-flow";
 import type { SessionRuntimeAuthInput } from "@/core/session-runtime-auth";
 import type { Task, TaskPriority, TaskStatus, Worktree } from "@/core/types-dashboard";
 import { cn } from "@/core/dashboard-utils";
@@ -94,7 +96,8 @@ export function TaskDetailDialog({
   const [selectedWorktree, setSelectedWorktree] = useState("");
   const [codingAgentId, setCodingAgentId] = useState(DEFAULT_CODING_AGENT_ID);
   const [agentTeamId, setAgentTeamId] = useState(DEFAULT_AGENT_TEAM_ID);
-  const { settings, runtimePayload, byokReady } = useAgentSettings();
+  const { settings, runtimePayload, byokReady, loaded, settingsReady } =
+    useAgentSettings();
 
   // Reset form when task changes
   useEffect(() => {
@@ -139,6 +142,8 @@ export function TaskDetailDialog({
   };
 
   const handleLaunch = async () => {
+    if (!settingsReady) return;
+
     const taskPrompt = prompt.trim() || task.prompt;
     if (!taskPrompt) return;
 
@@ -174,6 +179,7 @@ export function TaskDetailDialog({
     if (!dateStr) return null;
     return new Date(dateStr).toLocaleString();
   };
+  const canLaunchSession = isTaskExecutableStatus(task.status);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -263,11 +269,11 @@ export function TaskDetailDialog({
           {/* Prompt */}
           {editing ? (
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Claude Code Prompt</Label>
+              <Label className="text-xs text-muted-foreground">Agent Prompt</Label>
               <Textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Prompt for Claude Code..."
+                placeholder="Prompt for the selected coding agent..."
                 rows={4}
                 className="resize-none font-mono text-xs"
               />
@@ -317,6 +323,13 @@ export function TaskDetailDialog({
             </Button>
           )}
 
+          {task.status === "fail" && task.fail_reason && (
+            <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span className="whitespace-pre-wrap">{task.fail_reason}</span>
+            </div>
+          )}
+
           {/* Metadata */}
           <div className="border-t pt-3 space-y-2">
             {task.worktree_name && (
@@ -353,7 +366,7 @@ export function TaskDetailDialog({
           </div>
 
           {/* Launch session */}
-          {!task.session_id && task.status !== "done" && (
+          {canLaunchSession && (
             <div className="border-t pt-3 space-y-3">
               <Label className="text-xs text-muted-foreground">Launch Session from Task</Label>
               {worktrees.length > 1 && (
@@ -380,7 +393,9 @@ export function TaskDetailDialog({
               />
               <Button
                 onClick={handleLaunch}
-                disabled={launching || !(prompt.trim() || task.prompt) || !byokReady}
+                disabled={
+                  launching || !(prompt.trim() || task.prompt) || !settingsReady
+                }
                 size="sm"
                 className="w-full"
               >
@@ -389,6 +404,8 @@ export function TaskDetailDialog({
                     <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
                     Launching...
                   </>
+                ) : !loaded ? (
+                  <>Loading Settings...</>
                 ) : !byokReady ? (
                   <>Add API key in Settings</>
                 ) : (

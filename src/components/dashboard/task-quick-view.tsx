@@ -10,6 +10,7 @@ import { CreateTaskDialog } from "@/components/kanban/create-task-dialog";
 import { TaskDetailDialog } from "@/components/kanban/task-detail-dialog";
 import { useTasks } from "@/hooks/use-tasks";
 import type { Task, TaskStatus } from "@/core/types-dashboard";
+import type { SessionRuntimeAuthInput } from "@/core/session-runtime-auth";
 import { cn } from "@/core/dashboard-utils";
 
 const QUICK_COLUMNS: TaskStatus[] = ["todo", "in_progress"];
@@ -125,9 +126,15 @@ export function TaskQuickView() {
     task: Task,
     worktreePath: string,
     worktreeName?: string,
-    branchName?: string
+    branchName?: string,
+    agentConfig?: {
+      coding_agent_id: string;
+      agent_team_id: string;
+    } & SessionRuntimeAuthInput,
+    promptOverride?: string,
   ): Promise<{ id: string } | null> => {
-    if (!task.prompt) return null;
+    const prompt = promptOverride?.trim() || task.prompt;
+    if (!prompt) return null;
     const res = await fetch("/api/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -136,7 +143,8 @@ export function TaskQuickView() {
         worktree_name: worktreeName,
         worktree_path: worktreePath,
         branch_name: branchName,
-        prompt: task.prompt,
+        prompt,
+        ...agentConfig,
       }),
     });
     if (res.ok) {

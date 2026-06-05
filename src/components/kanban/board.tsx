@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DragDropContext, type DropResult } from "@hello-pangea/dnd";
 import { FileText } from "lucide-react";
-import { KanbanColumn } from "./column";
+import { KanbanColumn, KanbanGroupedColumn } from "./column";
 import { CreateTaskDialog } from "./create-task-dialog";
 import { TaskDetailDialog } from "./task-detail-dialog";
 import { useTasks } from "@/hooks/use-tasks";
@@ -13,22 +13,29 @@ import { useTaskSessions } from "@/hooks/use-task-sessions";
 import { useAgentSettings } from "@/hooks/use-agent-settings";
 import type { Task, TaskStatus } from "@/core/types-dashboard";
 import type { SessionRuntimeAuthInput } from "@/core/session-runtime-auth";
+import { getTaskBoardColumns } from "@/core/task-status-flow";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const COLUMNS: TaskStatus[] = ["todo", "in_progress", "review", "blocked", "done"];
+const COLUMNS = getTaskBoardColumns();
 
 export function KanbanBoard() {
   const { loading, tasksByStatus, createTask, updateTask, deleteTask, reorder, executeTask } = useTasks();
   const taskSessions = useTaskSessions();
-  const { runtimePayload, byokReady } = useAgentSettings();
+  const { runtimePayload, byokReady, loaded, settingsReady } = useAgentSettings();
   const router = useRouter();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 
   const handleExecuteTask = async (taskId: string) => {
+    if (!loaded) {
+      return;
+    }
     if (!byokReady) {
       router.push("/settings");
+      return;
+    }
+    if (!settingsReady) {
       return;
     }
     const result = await executeTask(taskId, runtimePayload);
@@ -121,8 +128,8 @@ export function KanbanBoard() {
   if (loading) {
     return (
       <div className="flex gap-4 overflow-x-auto pb-2">
-        {COLUMNS.map((col) => (
-          <Skeleton key={col} className="h-[400px] min-w-[240px] flex-1 rounded-lg" />
+        {COLUMNS.map((column) => (
+          <Skeleton key={column.id} className="h-[400px] min-w-[240px] flex-1 rounded-lg" />
         ))}
       </div>
     );
@@ -141,18 +148,34 @@ export function KanbanBoard() {
       </div>
       <DragDropContext onDragEnd={handleDragEnd}>
         <div className="flex gap-4 overflow-x-auto pb-2">
-          {COLUMNS.map((status) => (
-            <KanbanColumn
-              key={status}
-              status={status}
-              tasks={tasksByStatus(status)}
-              taskSessions={taskSessions}
-              onDeleteTask={deleteTask}
-              onClickTask={handleClickTask}
-              onExecuteTask={handleExecuteTask}
-              onPauseTask={handlePauseTask}
-            />
-          ))}
+          {COLUMNS.map((column) =>
+            column.type === "group" ? (
+              <KanbanGroupedColumn
+                key={column.id}
+                label={column.label}
+                sections={column.statuses.map((status) => ({
+                  status,
+                  tasks: tasksByStatus(status),
+                }))}
+                taskSessions={taskSessions}
+                onDeleteTask={deleteTask}
+                onClickTask={handleClickTask}
+                onExecuteTask={handleExecuteTask}
+                onPauseTask={handlePauseTask}
+              />
+            ) : (
+              <KanbanColumn
+                key={column.id}
+                status={column.status}
+                tasks={tasksByStatus(column.status)}
+                taskSessions={taskSessions}
+                onDeleteTask={deleteTask}
+                onClickTask={handleClickTask}
+                onExecuteTask={handleExecuteTask}
+                onPauseTask={handlePauseTask}
+              />
+            ),
+          )}
         </div>
       </DragDropContext>
 

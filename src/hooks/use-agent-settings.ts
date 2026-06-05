@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AGENT_SETTINGS_STORAGE_KEY,
   DEFAULT_AGENT_SETTINGS,
+  buildSessionContinuationRuntimePayload,
   buildSessionRuntimePayload,
   buildStoredAgentSettings,
   getScopedBrowserApiKey,
@@ -11,6 +12,7 @@ import {
   setScopedBrowserApiKey,
   type AgentSettings,
   type BrowserApiKeyScopes,
+  type SessionContinuationRuntimeSnapshot,
 } from "@/core/agent-settings";
 
 let browserOnlyApiKeysByScope: BrowserApiKeyScopes = {};
@@ -28,7 +30,9 @@ function isLoopbackApiBaseUrl(value: string): boolean {
   }
 }
 
-function isApiKeyRequired(settings: AgentSettings): boolean {
+function isApiKeyRequired(
+  settings: Pick<AgentSettings, "apiProtocol" | "apiBaseUrl">,
+): boolean {
   return !(
     settings.apiProtocol === "ollama" &&
     isLoopbackApiBaseUrl(settings.apiBaseUrl)
@@ -113,17 +117,51 @@ export function useAgentSettings() {
     () => buildSessionRuntimePayload(settings),
     [settings],
   );
+  const getRuntimePayloadForSession = useCallback(
+    (session: SessionContinuationRuntimeSnapshot) =>
+      buildSessionContinuationRuntimePayload(
+        session,
+        settings,
+        browserOnlyApiKeysByScope,
+      ),
+    [settings],
+  );
+  const isRuntimeReadyForSession = useCallback(
+    (session: SessionContinuationRuntimeSnapshot) => {
+      const payload = buildSessionContinuationRuntimePayload(
+        session,
+        settings,
+        browserOnlyApiKeysByScope,
+      );
+      if (payload.session_auth_mode !== "anthropic-api-key") {
+        return true;
+      }
+      return (
+        !isApiKeyRequired({
+          apiProtocol: (payload.agent_api_protocol ??
+            settings.apiProtocol) as AgentSettings["apiProtocol"],
+          apiBaseUrl: payload.agent_base_url ?? settings.apiBaseUrl,
+        }) || Boolean(payload.anthropic_api_key?.trim())
+      );
+    },
+    [settings],
+  );
+  const byokReady =
+    settings.executionMode !== "anthropic-api" ||
+    ((!isApiKeyRequired(settings) ||
+      settings.anthropicApiKey.trim().length > 0) &&
+      settings.apiModel.trim().length > 0 &&
+      settings.apiBaseUrl.trim().length > 0);
+  const settingsReady = loaded && byokReady;
 
   return {
     settings,
     setSettings,
     runtimePayload,
+    getRuntimePayloadForSession,
+    isRuntimeReadyForSession,
     loaded,
-    byokReady:
-      settings.executionMode !== "anthropic-api" ||
-      ((!isApiKeyRequired(settings) ||
-        settings.anthropicApiKey.trim().length > 0) &&
-        settings.apiModel.trim().length > 0 &&
-        settings.apiBaseUrl.trim().length > 0),
+    byokReady,
+    settingsReady,
   };
 }

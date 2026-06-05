@@ -5,6 +5,7 @@ import {
   DEFAULT_AGENT_MODEL,
   DEFAULT_SESSION_AUTH_MODE,
   buildClaudeProcessEnv,
+  getPersistedSessionBaseUrl,
   getSessionRuntimeAuthInputFromPayload,
   resolveSessionRuntimeAuthConfig,
 } from "../session-runtime-auth";
@@ -67,6 +68,29 @@ test("local CLI mode resolves selected agent, model, and reasoning", () => {
   assert.equal(config.localCliAgentName, "Codex CLI");
   assert.equal(config.model, "gpt-5-codex");
   assert.equal(config.reasoning, "high");
+});
+
+test("whitespace-only local CLI agent id is treated as absent", () => {
+  const config = resolveSessionRuntimeAuthConfig({
+    session_auth_mode: "local-cli",
+    local_cli_agent_id: "   ",
+    agent_model: "gpt-5-codex",
+    agent_reasoning: "high",
+  });
+
+  assert.equal(config.localCliAgentId, "claude");
+  assert.equal(config.model, "gpt-5-codex");
+  assert.equal(config.reasoning, "high");
+});
+
+test("local CLI mode persists a non-null default base URL for session metadata", () => {
+  const config = resolveSessionRuntimeAuthConfig({
+    session_auth_mode: "local-cli",
+    local_cli_agent_id: "claude",
+  });
+
+  assert.equal(config.baseUrl, null);
+  assert.equal(getPersistedSessionBaseUrl(config), "https://api.anthropic.com");
 });
 
 test("local CLI mode resolves selected allowlisted environment overrides", () => {

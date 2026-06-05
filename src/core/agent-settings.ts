@@ -65,6 +65,17 @@ export interface AgentSettings {
   anthropicApiKey: string;
 }
 
+export interface SessionContinuationRuntimeSnapshot {
+  session_auth_mode?: string | null;
+  local_cli_agent_id?: string | null;
+  agent_model?: string | null;
+  agent_reasoning?: string | null;
+  agent_api_protocol?: string | null;
+  agent_api_version?: string | null;
+  agent_base_url?: string | null;
+  agent_max_tokens?: number | null;
+}
+
 export type StoredAgentSettings = Pick<
   AgentSettings,
   | "executionMode"
@@ -872,5 +883,51 @@ export function buildSessionRuntimePayload(
     agent_reasoning: normalized.localCliReasoning,
     local_cli_agent_env:
       normalized.localCliAgentEnv[normalized.localCliAgentId] ?? {},
+  };
+}
+
+export function buildSessionContinuationRuntimePayload(
+  session: SessionContinuationRuntimeSnapshot,
+  settings: AgentSettings,
+  scopedKeys: BrowserApiKeyScopes = {},
+): SessionRuntimeAuthInput {
+  const normalized = normalizeAgentSettings(settings);
+
+  if (session.session_auth_mode === "anthropic-api-key") {
+    const apiProtocol = sanitizeApiProtocol(session.agent_api_protocol);
+    const apiBaseUrl = sanitizeApiBaseUrl(session.agent_base_url, apiProtocol);
+    return {
+      session_auth_mode: "anthropic-api-key",
+      agent_api_protocol: apiProtocol,
+      agent_model: sanitizeApiModel(session.agent_model, apiProtocol),
+      agent_base_url: apiBaseUrl,
+      agent_api_version: sanitizeApiVersion(session.agent_api_version),
+      agent_max_tokens: sanitizeApiMaxTokens(session.agent_max_tokens),
+      anthropic_api_key:
+        getScopedBrowserApiKey(
+          { apiProtocol, apiBaseUrl },
+          scopedKeys,
+        ).trim() || null,
+    };
+  }
+
+  const localCliAgentId = sanitizeLocalCliAgentId(session.local_cli_agent_id);
+  const localCliAgent = getLocalCliAgentDefinition(localCliAgentId);
+  const reasoningIds = new Set(
+    (localCliAgent.reasoningOptions ?? [
+      { id: DEFAULT_LOCAL_CLI_REASONING, label: "Default" },
+    ]).map((option) => option.id),
+  );
+
+  return {
+    session_auth_mode: "local-cli",
+    local_cli_agent_id: localCliAgentId,
+    agent_model: sanitizeLocalCliModel(session.agent_model, localCliAgentId),
+    agent_reasoning: sanitizeKnownOption(
+      session.agent_reasoning,
+      reasoningIds,
+      DEFAULT_AGENT_SETTINGS.localCliReasoning,
+    ),
+    local_cli_agent_env: normalized.localCliAgentEnv[localCliAgentId] ?? {},
   };
 }

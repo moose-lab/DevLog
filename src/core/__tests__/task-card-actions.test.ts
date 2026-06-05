@@ -68,6 +68,13 @@ test("historical sessions do not hide the execute button", () => {
   );
 });
 
+test("failed tasks can execute again when the linked session is terminal", () => {
+  assert.equal(
+    canExecuteTaskFromCard(task({ status: "fail", prompt: "Run it" }), session({ status: "failed" })),
+    true
+  );
+});
+
 test("active sessions hide execute and show pause for in-progress cards", () => {
   assert.equal(
     canExecuteTaskFromCard(task({ status: "todo", prompt: "Run it" }), session({ status: "running" })),

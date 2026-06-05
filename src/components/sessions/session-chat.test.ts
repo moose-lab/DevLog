@@ -1,11 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  formatActivityEntryForDisplay,
+  formatActivityTimestampForDisplay,
   formatToolOutputForDisplay,
   getSessionInstructionInputCopy,
   isInteractiveSessionStatus,
   isTerminalSessionStatus,
 } from "./session-chat";
+import {
+  createReplayChatMessage,
+  mergeReplayMessagesWithQueuedPlaceholders,
+} from "@/hooks/use-session-chat";
 
 test("formatToolOutputForDisplay keeps complete output up to 20 lines", () => {
   const output = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join(
@@ -40,6 +46,129 @@ test("formatToolOutputForDisplay folds output longer than 20 lines", () => {
       "line 23",
       "line 24",
     ].join("\n"),
+  );
+});
+
+test("formatActivityEntryForDisplay returns status messages", () => {
+  assert.equal(
+    formatActivityEntryForDisplay({
+      id: 1,
+      kind: "status",
+      message: "Agent process running as PID 1234",
+    }),
+    "Agent process running as PID 1234",
+  );
+});
+
+test("formatActivityEntryForDisplay trims, truncates, and labels stderr logs", () => {
+  const longChunk = `  ${"stderr chunk ".repeat(24)}  `;
+
+  const formatted = formatActivityEntryForDisplay({
+    id: 2,
+    kind: "log",
+    stream: "stderr",
+    message: longChunk,
+  });
+
+  assert.match(formatted, /^\[stderr\] stderr chunk/);
+  assert.equal(formatted.endsWith("..."), true);
+  assert.ok(formatted.length <= "[stderr] ".length + 160 + "...".length);
+});
+
+test("formatActivityEntryForDisplay returns system warning and success messages", () => {
+  assert.equal(
+    formatActivityEntryForDisplay({
+      id: 3,
+      kind: "system",
+      level: "warning",
+      message: "Agent process exited unexpectedly",
+    }),
+    "Agent process exited unexpectedly",
+  );
+
+  assert.equal(
+    formatActivityEntryForDisplay({
+      id: 4,
+      kind: "system",
+      level: "success",
+      message: "Agent process completed",
+    }),
+    "Agent process completed",
+  );
+});
+
+test("formatActivityTimestampForDisplay omits invalid timestamps", () => {
+  assert.equal(formatActivityTimestampForDisplay(undefined), null);
+  assert.equal(formatActivityTimestampForDisplay("not a timestamp"), null);
+});
+
+test("createReplayChatMessage preserves stable persisted message ids", () => {
+  assert.deepEqual(
+    createReplayChatMessage({
+      type: "message",
+      id: 42,
+      role: "assistant",
+      content: "persisted response",
+    }),
+    {
+      id: 42,
+      role: "assistant",
+      content: "persisted response",
+    },
+  );
+});
+
+test("mergeReplayMessagesWithQueuedPlaceholders drops queued messages already replayed as user messages", () => {
+  const replayed = [
+    { id: 1, role: "user" as const, content: "persisted follow-up" },
+    { id: 2, role: "assistant" as const, content: "working" },
+  ];
+  const current = [
+    {
+      id: 3,
+      role: "user" as const,
+      content: "persisted follow-up",
+      isQueued: true,
+    },
+    {
+      id: 4,
+      role: "user" as const,
+      content: "still queued",
+      isQueued: true,
+    },
+    { id: 5, role: "assistant" as const, content: "stale live text" },
+  ];
+
+  assert.deepEqual(
+    mergeReplayMessagesWithQueuedPlaceholders(replayed, current).map(
+      (message) => message.content,
+    ),
+    ["persisted follow-up", "working", "still queued"],
+  );
+});
+
+test("mergeReplayMessagesWithQueuedPlaceholders consumes one queued duplicate per replayed user message", () => {
+  const replayed = [{ id: 1, role: "user" as const, content: "continue" }];
+  const current = [
+    {
+      id: 2,
+      role: "user" as const,
+      content: "continue",
+      isQueued: true,
+    },
+    {
+      id: 3,
+      role: "user" as const,
+      content: "continue",
+      isQueued: true,
+    },
+  ];
+
+  assert.deepEqual(
+    mergeReplayMessagesWithQueuedPlaceholders(replayed, current).map(
+      (message) => message.content,
+    ),
+    ["continue", "continue"],
   );
 });
 
@@ -82,6 +211,21 @@ test("getSessionInstructionInputCopy uses instruction-oriented copy for active s
       helperText:
         "Instruction will be queued and sent when the current turn finishes",
       disabledText: "Session ended",
+    },
+  );
+});
+
+test("getSessionInstructionInputCopy blocks session follow-up when selected runtime is not ready", () => {
+  assert.deepEqual(
+    getSessionInstructionInputCopy({
+      processing: false,
+      sessionEnded: false,
+      runtimeReady: false,
+    }),
+    {
+      placeholder: "",
+      helperText: "",
+      disabledText: "Add API key in Settings",
     },
   );
 });

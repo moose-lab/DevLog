@@ -14,6 +14,8 @@ import {
   CheckCircle2,
   FileCode2,
 } from "lucide-react";
+import { buildTaskRetryRequestBody } from "@/core/task-retry-request";
+import { useAgentSettings } from "@/hooks/use-agent-settings";
 import type { Task } from "@/core/types-dashboard";
 
 interface TaskReviewPanelProps {
@@ -30,6 +32,13 @@ export function TaskReviewPanel({ task, onUpdate }: TaskReviewPanelProps) {
   const [retrying, setRetrying] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [showFeedback, setShowFeedback] = useState(false);
+  const { runtimePayload, byokReady, loaded, settingsReady } =
+    useAgentSettings();
+  const retryButtonLabel = !loaded
+    ? "Loading Settings..."
+    : byokReady
+      ? "Retry with Feedback"
+      : "Add API key in Settings";
 
   useEffect(() => {
     if (task.worktree_name) {
@@ -58,13 +67,15 @@ export function TaskReviewPanel({ task, onUpdate }: TaskReviewPanelProps) {
   };
 
   const handleRetry = async () => {
-    if (!feedback.trim()) return;
+    if (!feedback.trim() || !settingsReady) return;
     setRetrying(true);
     try {
       const res = await fetch(`/api/tasks/${task.id}/retry`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ feedback: feedback.trim() }),
+        body: JSON.stringify(
+          buildTaskRetryRequestBody(feedback, runtimePayload),
+        ),
       });
       if (res.ok) {
         const { session } = await res.json();
@@ -154,16 +165,18 @@ export function TaskReviewPanel({ task, onUpdate }: TaskReviewPanelProps) {
           />
           <Button
             onClick={handleRetry}
-            disabled={retrying || !feedback.trim()}
+            disabled={retrying || !feedback.trim() || !settingsReady}
             size="sm"
             className="w-full"
           >
             {retrying ? (
               <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-            ) : (
+            ) : settingsReady ? (
               <RefreshCw className="h-3.5 w-3.5 mr-1" />
+            ) : (
+              <FileCode2 className="h-3.5 w-3.5 mr-1" />
             )}
-            Retry with Feedback
+            {retryButtonLabel}
           </Button>
         </div>
       )}

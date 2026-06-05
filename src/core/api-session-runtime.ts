@@ -6,9 +6,10 @@ import {
   type ProviderChatMessage,
 } from "./api-provider-runtime";
 import {
-  resolveSessionRuntimeAuthConfig,
+  resolveStoredSessionRuntimeAuthConfig,
   type SessionRuntimeAuthInput,
 } from "./session-runtime-auth";
+import { markSessionFailedAndReleaseLinkedTask } from "./task-lifecycle";
 import type { ChatStreamEvent } from "./stream-manager";
 
 export interface ProviderSessionTurnOptions {
@@ -51,25 +52,10 @@ export async function runProviderSessionTurn({
     return { ok: false, error: "Session not found" };
   }
 
-  const runtimeAuthConfig = resolveSessionRuntimeAuthConfig({
-    session_auth_mode:
-      runtimeAuthInput.session_auth_mode ?? session.session_auth_mode,
-    agent_api_key_env_var:
-      runtimeAuthInput.agent_api_key_env_var ?? session.agent_api_key_env_var,
-    local_cli_agent_id:
-      runtimeAuthInput.local_cli_agent_id ?? session.local_cli_agent_id,
-    agent_model: runtimeAuthInput.agent_model ?? session.agent_model,
-    agent_reasoning:
-      runtimeAuthInput.agent_reasoning ?? session.agent_reasoning,
-    agent_api_protocol:
-      runtimeAuthInput.agent_api_protocol ?? session.agent_api_protocol,
-    agent_api_version:
-      runtimeAuthInput.agent_api_version ?? session.agent_api_version,
-    agent_base_url: runtimeAuthInput.agent_base_url ?? session.agent_base_url,
-    agent_max_tokens:
-      runtimeAuthInput.agent_max_tokens ?? session.agent_max_tokens,
-    anthropic_api_key: runtimeAuthInput.anthropic_api_key,
-  });
+  const runtimeAuthConfig = resolveStoredSessionRuntimeAuthConfig(
+    session,
+    runtimeAuthInput,
+  );
 
   if (
     runtimeAuthConfig.mode !== "anthropic-api-key" ||
@@ -83,9 +69,7 @@ export async function runProviderSessionTurn({
 
   const validated = validateProviderRuntimeConfig(runtimeAuthConfig);
   if (!validated.ok) {
-    db.prepare(
-      "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?",
-    ).run(sessionId);
+    markSessionFailedAndReleaseLinkedTask(db, sessionId, validated.error);
     emit(sessionId, { type: "error", message: validated.error });
     emit(sessionId, { type: "status", status: "failed" });
     return { ok: false, error: validated.error };
@@ -115,23 +99,27 @@ export async function runProviderSessionTurn({
     };
   }
 
-  emit(sessionId, { type: "message", role: "user", content: message });
+  emit(sessionId, {
+    type: "message",
+    id: Number(insertedUser.lastInsertRowid),
+    role: "user",
+    content: message,
+  });
 
   if (!result.ok) {
-    db.prepare(
-      "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?",
-    ).run(sessionId);
+    markSessionFailedAndReleaseLinkedTask(db, sessionId, result.error);
     emit(sessionId, { type: "error", message: result.error });
     emit(sessionId, { type: "status", status: "failed" });
     return { ok: false, error: result.error };
   }
 
-  db.prepare(
+  const insertedAssistant = db.prepare(
     "INSERT INTO session_messages (session_id, role, content) VALUES (?, 'assistant', ?)",
   ).run(sessionId, result.content);
   emit(sessionId, { type: "text_delta", text: result.content });
   emit(sessionId, {
     type: "message",
+    id: Number(insertedAssistant.lastInsertRowid),
     role: "assistant",
     content: result.content,
   });

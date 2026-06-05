@@ -10,13 +10,19 @@ import {
 } from "@/core/process-manager";
 import { fileWatcher } from "@/core/file-watcher";
 import { hasTaskPrompt } from "@/core/task-readiness";
-import { slugify, buildPromptTemplate } from "@/core/task-lifecycle";
+import {
+  markSessionFailedAndReleaseLinkedTask,
+  slugify,
+  buildPromptTemplate,
+} from "@/core/task-lifecycle";
+import { isTaskExecutableStatus } from "@/core/task-status-flow";
 import {
   getAgentExecutionInputFromPayload,
   resolveAgentExecutionConfig,
 } from "@/core/agent-presets";
 import {
   getSessionRuntimeAuthInputFromPayload,
+  getPersistedSessionBaseUrl,
   resolveSessionRuntimeAuthConfig,
 } from "@/core/session-runtime-auth";
 import type { Task, Session } from "@/core/types-dashboard";
@@ -54,7 +60,7 @@ export async function POST(
       { status: 400 }
     );
   }
-  if (task.status !== "todo" && task.status !== "blocked") {
+  if (!isTaskExecutableStatus(task.status)) {
     return NextResponse.json(
       { error: `Cannot execute task with status '${task.status}'` },
       { status: 400 }
@@ -122,7 +128,7 @@ export async function POST(
         agent_reasoning, agent_api_protocol, agent_api_version,
         agent_base_url, agent_max_tokens, prompt
       )
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING *`
     )
     .get(
@@ -141,14 +147,14 @@ export async function POST(
       runtimeAuthConfig.reasoning,
       runtimeAuthConfig.apiProtocol,
       runtimeAuthConfig.apiVersion,
-      runtimeAuthConfig.baseUrl,
+      getPersistedSessionBaseUrl(runtimeAuthConfig),
       runtimeAuthConfig.maxTokens,
       prompt
     ) as Session;
 
   // 4. Update task
   db.prepare(
-    "UPDATE tasks SET status = 'in_progress', worktree_name = ?, session_id = ?, updated_at = datetime('now') WHERE id = ?"
+    "UPDATE tasks SET status = 'in_progress', worktree_name = ?, session_id = ?, fail_reason = NULL, completed_at = NULL, updated_at = datetime('now') WHERE id = ?"
   ).run(worktreeName, sessionId, taskId);
 
   // 5. Start file watcher
@@ -162,9 +168,11 @@ export async function POST(
   try {
     processManager.sendMessage(sessionId, prompt, runtimeAuthInput);
   } catch (err) {
-    db.prepare(
-      "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?"
-    ).run(sessionId);
+    markSessionFailedAndReleaseLinkedTask(
+      db,
+      sessionId,
+      `Failed to start agent: ${(err as Error).message}`,
+    );
     return NextResponse.json(
       { error: `Failed to start agent: ${(err as Error).message}` },
       { status: 500 }

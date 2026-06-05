@@ -11,9 +11,23 @@ export type ChatStreamEvent =
   | { type: "tool_result"; name: string; output: string; is_error?: boolean }
   | { type: "turn_end"; cost_usd?: number; duration_ms?: number; session_id?: string }
   | { type: "error"; message: string }
-  | { type: "status"; status: string; content?: string }
+  | {
+      type: "status";
+      status: string;
+      content?: string;
+      pid?: number | null;
+      started_at?: string | null;
+      ended_at?: string | null;
+    }
+  | {
+      type: "log";
+      id?: number;
+      stream: "stdout" | "stderr";
+      chunk: string;
+      timestamp: string;
+    }
   | { type: "system_log"; level: SystemLogLevel; prefix?: string; message: string; session_id?: string; timestamp: string }
-  | { type: "message"; role: "user" | "assistant"; content: string; tool_calls?: ToolCall[] }
+  | { type: "message"; id?: number; role: "user" | "assistant"; content: string; tool_calls?: ToolCall[] }
   // Interactive session events
   | { type: "permission_request"; tool_name: string; tool_input: Record<string, unknown>; request_id: string }
   | { type: "permission_resolved"; request_id: string; approved: boolean }
