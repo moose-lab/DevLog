@@ -10,6 +10,11 @@ import {
   type ToolCall,
 } from "./stream-manager";
 import {
+  applyControlPlaneEvent,
+  parseControlPlaneProtocolText,
+  type ControlPlaneProtocolEvent,
+} from "./control-plane-protocol";
+import {
   markSessionFailedAndReleaseLinkedTask,
   onSessionExit,
 } from "./task-lifecycle";
@@ -1533,11 +1538,59 @@ class ProcessManager {
     text: string,
   ): void {
     if (!text) return;
-    sp.textBuffer += text;
+    const parsed = parseControlPlaneProtocolText(text);
+    for (const event of parsed.events) {
+      this.handleControlPlaneEvent(sessionId, event);
+    }
+
+    if (!parsed.text) return;
+    sp.textBuffer += parsed.text;
     streamManager.emit(sessionId, {
       type: "text_delta",
-      text,
+      text: parsed.text,
     });
+  }
+
+  private handleControlPlaneEvent(
+    sessionId: string,
+    event: ControlPlaneProtocolEvent,
+  ): void {
+    let applied: ReturnType<typeof applyControlPlaneEvent> = null;
+    try {
+      applied = applyControlPlaneEvent(getDb(), sessionId, event);
+    } catch (error) {
+      this.emitSystemLog(
+        "warning",
+        sessionId,
+        `Ignored DevLog control marker: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+    if (!applied) return;
+
+    if (event.type === "stage") {
+      const streamEvent = {
+        type: "control_plane_stage" as const,
+        session_id: sessionId,
+        task_id: applied.taskId,
+        current_stage: event.current_stage,
+      };
+      streamManager.emit(sessionId, streamEvent);
+      streamManager.emit("global", streamEvent);
+      return;
+    }
+
+    if (applied.gateStatus) {
+      const streamEvent = {
+        type: "control_plane_gate" as const,
+        session_id: sessionId,
+        task_id: applied.taskId,
+        current_stage: applied.currentStage,
+        gate_status: applied.gateStatus,
+      };
+      streamManager.emit(sessionId, streamEvent);
+      streamManager.emit("global", streamEvent);
+    }
   }
 
   /**
@@ -1616,11 +1669,7 @@ class ProcessManager {
 
       for (const block of msg.content) {
         if (block.type === "text" && block.text) {
-          sp.textBuffer += block.text;
-          streamManager.emit(sessionId, {
-            type: "text_delta",
-            text: block.text,
-          });
+          this.emitTextDelta(sessionId, sp, block.text);
         } else if (block.type === "tool_use" && block.name) {
           const toolCall: ToolCall = {
             name: block.name,
@@ -1641,11 +1690,7 @@ class ProcessManager {
     if (type === "content_block_delta") {
       const delta = event.delta as { type?: string; text?: string } | undefined;
       if (delta?.type === "text_delta" && delta.text) {
-        sp.textBuffer += delta.text;
-        streamManager.emit(sessionId, {
-          type: "text_delta",
-          text: delta.text,
-        });
+        this.emitTextDelta(sessionId, sp, delta.text);
       }
       return;
     }
