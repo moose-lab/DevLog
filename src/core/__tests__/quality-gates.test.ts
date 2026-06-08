@@ -189,3 +189,15 @@ test("kanban task surfaces render control-plane state", () => {
   assert.match(dialog, /action:\s*"resolve_gate"/, "task detail replies should call resolve_gate");
   assert.match(dialog, /gateStatus\.options\.map/, "task detail should render gate option buttons");
 });
+
+test("session surfaces render control-plane state", () => {
+  const indicator = readRepoFile("src/components/sessions/process-indicator.tsx");
+  const card = readRepoFile("src/components/sessions/session-card.tsx");
+  const detail = readRepoFile("src/app/sessions/[id]/page.tsx");
+
+  assert.match(indicator, /currentStage/, "process indicator should accept current stage text");
+  assert.match(indicator, /needs-input/, "process indicator should render needs-input");
+  assert.match(card, /parseGateStatus/, "session cards should parse gate status");
+  assert.match(card, /current_stage/, "session cards should pass current stage");
+  assert.match(detail, /gate_status/, "session detail should pass gate state to the header indicator");
+});
