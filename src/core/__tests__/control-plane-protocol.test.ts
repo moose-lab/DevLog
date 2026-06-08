@@ -5,6 +5,7 @@ import { SCHEMA } from "../db-schema";
 import {
   applyControlPlaneEvent,
   parseControlPlaneProtocolText,
+  resolveControlPlaneGate,
 } from "../control-plane-protocol";
 
 function makeDb(): Database.Database {
@@ -108,4 +109,42 @@ test("applyControlPlaneEvent updates session and linked task state", () => {
   assert.equal(gateTask.current_stage, "1/3 · plan");
   assert.equal(gateSession.gate_status, JSON.stringify(applied?.gateStatus));
   assert.equal(gateTask.gate_status, JSON.stringify(applied?.gateStatus));
+});
+
+test("resolveControlPlaneGate clears gate state without clearing current stage", () => {
+  const db = makeDb();
+  db.prepare("INSERT INTO tasks (id, project_id, title) VALUES ('task-1', 'test', 'Task')").run();
+  db.prepare(
+    "INSERT INTO sessions (id, project_id, task_id, status) VALUES ('session-1', 'test', 'task-1', 'paused')",
+  ).run();
+  const applied = applyControlPlaneEvent(
+    db,
+    "session-1",
+    {
+      type: "gate",
+      question: "Continue?",
+      options: ["Continue"],
+      stage: "2/3 · approval",
+    },
+    {
+      now: () => new Date("2026-06-08T08:00:00.000Z"),
+      createId: () => "gate-test",
+    },
+  );
+  assert.ok(applied?.gateStatus);
+
+  const resolved = resolveControlPlaneGate(db, "session-1");
+
+  assert.deepEqual(resolved?.gateStatus, applied.gateStatus);
+  const session = db
+    .prepare("SELECT current_stage, gate_status FROM sessions WHERE id = 'session-1'")
+    .get() as { current_stage: string | null; gate_status: string | null };
+  const task = db
+    .prepare("SELECT current_stage, gate_status FROM tasks WHERE id = 'task-1'")
+    .get() as { current_stage: string | null; gate_status: string | null };
+
+  assert.equal(session.current_stage, "2/3 · approval");
+  assert.equal(task.current_stage, "2/3 · approval");
+  assert.equal(session.gate_status, null);
+  assert.equal(task.gate_status, null);
 });

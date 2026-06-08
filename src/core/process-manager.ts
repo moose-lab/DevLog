@@ -12,7 +12,9 @@ import {
 import {
   applyControlPlaneEvent,
   parseControlPlaneProtocolText,
+  resolveControlPlaneGate,
   type ControlPlaneProtocolEvent,
+  type ResolvedControlPlaneGate,
 } from "./control-plane-protocol";
 import {
   markSessionFailedAndReleaseLinkedTask,
@@ -1223,6 +1225,100 @@ class ProcessManager {
     });
   }
 
+  resolveGate(
+    sessionId: string,
+    response: string,
+  ): { ok: true } | { ok: false; error: string } {
+    const trimmed = response.trim();
+    if (!trimmed) {
+      return { ok: false, error: "response is required" };
+    }
+
+    const db = getDb();
+    const resolved = resolveControlPlaneGate(db, sessionId);
+    if (!resolved) {
+      return { ok: false, error: "no pending gate" };
+    }
+
+    const insertResult = db.prepare(
+      "INSERT INTO session_messages (session_id, role, content) VALUES (?, 'user', ?)",
+    ).run(sessionId, trimmed);
+    const messageId = Number(insertResult.lastInsertRowid);
+
+    streamManager.emit(sessionId, {
+      type: "message",
+      id: messageId,
+      role: "user",
+      content: trimmed,
+    });
+
+    const sp = this.sessions.get(sessionId);
+    if (sp && !sp.proc.killed) {
+      const requestId = sp.pendingPermission?.requestId ?? resolved.gateStatus.id;
+      sp.pendingPermission = null;
+      if (sp.paused) {
+        sp.proc.kill("SIGCONT");
+        sp.paused = false;
+      }
+      sp.isProcessing = true;
+      this.writeGateResponse(sp, trimmed);
+      streamManager.emit(sessionId, {
+        type: "permission_resolved",
+        request_id: requestId,
+        approved: true,
+      });
+    }
+
+    db.prepare(
+      "UPDATE sessions SET status = 'running' WHERE id = ? AND status = 'paused'",
+    ).run(sessionId);
+
+    const resolvedEvent = {
+      type: "control_plane_gate_resolved" as const,
+      session_id: sessionId,
+      task_id: resolved.taskId,
+      gate_id: resolved.gateStatus.id,
+      response: trimmed,
+    };
+    streamManager.emit(sessionId, resolvedEvent);
+    streamManager.emit("global", resolvedEvent);
+    streamManager.emit(sessionId, { type: "status", status: "running" });
+    streamManager.emit("global", { type: "status", status: "running" });
+
+    return { ok: true };
+  }
+
+  private writeGateResponse(sp: SessionProcess, response: string): void {
+    if (!sp.proc.stdin || sp.proc.stdin.destroyed || sp.proc.stdin.writableEnded) {
+      this.emitSystemLog(
+        "warning",
+        sp.sessionId,
+        "Gate resolved, but agent stdin is no longer writable.",
+      );
+      return;
+    }
+
+    try {
+      if (sp.inputProtocol === "claude-stream-json") {
+        const inputMsg = JSON.stringify({
+          type: "user",
+          message: { role: "user", content: response },
+          session_id: sp.claudeSessionId ?? "default",
+          parent_tool_use_id: null,
+        });
+        sp.proc.stdin.write(inputMsg + "\n");
+        return;
+      }
+      sp.proc.stdin.write(response + "\n");
+    } catch (err) {
+      this.emitSystemLog(
+        "warning",
+        sp.sessionId,
+        `Failed to write gate response: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   private handleGenericOutputChunk(
     sessionId: string,
     sp: SessionProcess,
@@ -1590,7 +1686,53 @@ class ProcessManager {
       };
       streamManager.emit(sessionId, streamEvent);
       streamManager.emit("global", streamEvent);
+      this.pauseForControlPlaneGate(sessionId, {
+        sessionId,
+        taskId: applied.taskId,
+        currentStage: applied.currentStage,
+        gateStatus: applied.gateStatus,
+      });
     }
+  }
+
+  private pauseForControlPlaneGate(
+    sessionId: string,
+    gate: ResolvedControlPlaneGate,
+  ): void {
+    const toolInput = {
+      question: gate.gateStatus.question,
+      options: gate.gateStatus.options,
+      stage: gate.gateStatus.stage ?? null,
+    };
+    const sp = this.sessions.get(sessionId);
+    if (sp && !sp.proc.killed) {
+      sp.pendingPermission = {
+        requestId: gate.gateStatus.id,
+        toolName: "AskHuman",
+        toolInput,
+      };
+      sp.proc.kill("SIGSTOP");
+      sp.paused = true;
+      sp.isProcessing = false;
+    }
+
+    const db = getDb();
+    db.prepare(
+      "UPDATE sessions SET status = 'paused' WHERE id = ? AND status NOT IN ('completed', 'failed', 'killed')",
+    ).run(sessionId);
+    streamManager.emit(sessionId, {
+      type: "permission_request",
+      tool_name: "AskHuman",
+      tool_input: toolInput,
+      request_id: gate.gateStatus.id,
+    });
+    streamManager.emit(sessionId, { type: "status", status: "paused" });
+    streamManager.emit("global", { type: "status", status: "paused" });
+    this.emitSystemLog(
+      "info",
+      sessionId,
+      `Session ${sessionId.slice(0, 8)} paused for human gate`,
+    );
   }
 
   /**

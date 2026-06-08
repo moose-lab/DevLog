@@ -18,6 +18,13 @@ export interface AppliedControlPlaneEvent {
   gateStatus: GateStatus | null;
 }
 
+export interface ResolvedControlPlaneGate {
+  sessionId: string;
+  taskId: string | null;
+  currentStage: string | null;
+  gateStatus: GateStatus;
+}
+
 const MARKER_PATTERN = /^\s*\[DEVLOG_(STAGE|GATE)\]\s+(.+?)\s*$/;
 
 export function parseControlPlaneProtocolText(
@@ -110,6 +117,35 @@ export function applyControlPlaneEvent(
   };
 }
 
+export function resolveControlPlaneGate(
+  db: Database.Database,
+  sessionId: string,
+): ResolvedControlPlaneGate | null {
+  const session = db
+    .prepare("SELECT task_id, current_stage, gate_status FROM sessions WHERE id = ? LIMIT 1")
+    .get(sessionId) as
+    | { task_id: string | null; current_stage: string | null; gate_status: string | null }
+    | undefined;
+
+  if (!session?.gate_status) return null;
+  const gateStatus = parseGateStatus(session.gate_status);
+  if (!gateStatus) return null;
+
+  db.prepare("UPDATE sessions SET gate_status = NULL WHERE id = ?").run(sessionId);
+  if (session.task_id) {
+    db.prepare(
+      "UPDATE tasks SET gate_status = NULL, updated_at = datetime('now') WHERE id = ?",
+    ).run(session.task_id);
+  }
+
+  return {
+    sessionId,
+    taskId: session.task_id,
+    currentStage: session.current_stage,
+    gateStatus,
+  };
+}
+
 function parseProtocolMarker(
   markerType: string,
   rawJson: string,
@@ -171,4 +207,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function trimProtocolLineGaps(text: string): string {
   return text.replace(/\n{3,}/g, "\n\n").replace(/^\n+|\n+$/g, "");
+}
+
+function parseGateStatus(value: string): GateStatus | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) return null;
+
+  const id = readNonEmptyString(parsed.id);
+  const question = readNonEmptyString(parsed.question);
+  if (!id || !question) return null;
+
+  return {
+    id,
+    question,
+    options: readOptions(parsed.options),
+    created_at: readNonEmptyString(parsed.created_at) ?? new Date(0).toISOString(),
+    stage: readNonEmptyString(parsed.stage),
+  };
 }

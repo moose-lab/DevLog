@@ -47,6 +47,13 @@ export type ChatStreamEvent =
       task_id: string | null;
       current_stage: string | null;
       gate_status: GateStatus;
+    }
+  | {
+      type: "control_plane_gate_resolved";
+      session_id: string;
+      task_id: string | null;
+      gate_id: string;
+      response: string;
     };
 
 export function createSystemLogEvent({

@@ -156,3 +156,23 @@ test("sessions POST narrows arbitrary JSON before destructuring", () => {
     "sessions POST should not destructure arbitrary JSON via a blind type cast",
   );
 });
+
+test("sessions PATCH resolves gates through a dedicated action", () => {
+  const source = readRepoFile("src/app/api/sessions/[id]/route.ts");
+
+  assert.match(
+    source,
+    /action\?:[\s\S]*"resolve_gate"/,
+    "sessions PATCH action type should include resolve_gate",
+  );
+  assert.match(
+    source,
+    /case "resolve_gate":[\s\S]*processManager\.resolveGate/,
+    "resolve_gate should call processManager.resolveGate instead of sendMessage",
+  );
+  assert.doesNotMatch(
+    source,
+    /case "resolve_gate":[\s\S]*processManager\.sendMessage[\s\S]*break;/,
+    "resolve_gate must stay isolated from normal queued send messages",
+  );
+});
