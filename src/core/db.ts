@@ -289,10 +289,17 @@ export function migrateControlPlaneColumns(db: Database.Database): void {
   }
 }
 
-function recoverOrphanedSessions(db: Database.Database): void {
+export function recoverOrphanedSessions(db: Database.Database): void {
   const orphaned = db
-    .prepare("SELECT id, pid FROM sessions WHERE status IN ('running', 'idle', 'paused', 'pending')")
-    .all() as { id: string; pid: number | null }[];
+    .prepare(
+      "SELECT id, pid, status, gate_status FROM sessions WHERE status IN ('running', 'idle', 'paused', 'pending')",
+    )
+    .all() as {
+      id: string;
+      pid: number | null;
+      status: string;
+      gate_status: string | null;
+    }[];
 
   for (const session of orphaned) {
     let alive = false;
@@ -306,6 +313,9 @@ function recoverOrphanedSessions(db: Database.Database): void {
     }
 
     if (!alive) {
+      if (session.status === "paused" && session.gate_status) {
+        continue;
+      }
       db.prepare(
         "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?"
       ).run(session.id);

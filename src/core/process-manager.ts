@@ -1252,7 +1252,11 @@ class ProcessManager {
       content: trimmed,
     });
 
-    const sp = this.sessions.get(sessionId);
+    let sp = this.sessions.get(sessionId);
+    if (!sp || sp.proc.killed) {
+      sp = this.ensureProcess(sessionId) ?? undefined;
+    }
+
     if (sp && !sp.proc.killed) {
       const requestId = sp.pendingPermission?.requestId ?? resolved.gateStatus.id;
       sp.pendingPermission = null;

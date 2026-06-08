@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { makeTestDb, insertTask } from "./test-helpers";
-import { migrateControlPlaneColumns, migrateTasksV2 } from "../db";
+import { migrateControlPlaneColumns, migrateTasksV2, recoverOrphanedSessions } from "../db";
 
 test("tasks.status accepts new in_queue and fail values", () => {
   const db = makeTestDb();
@@ -184,4 +184,34 @@ test("migrateControlPlaneColumns adds task and session gate columns on legacy DB
   assert.equal(task.gate_status, null);
   assert.equal(session.current_stage, null);
   assert.equal(session.gate_status, null);
+});
+
+test("recoverOrphanedSessions preserves paused gated sessions", () => {
+  const db = makeTestDb();
+  const gateStatus = JSON.stringify({
+    id: "gate-1",
+    question: "Continue?",
+    options: ["Continue"],
+    created_at: "2026-06-08T08:00:00.000Z",
+    stage: "2/3 approval",
+  });
+  db.prepare(
+    "INSERT INTO sessions (id, project_id, status, pid, gate_status) VALUES ('gated', 'test', 'paused', 99999999, ?)",
+  ).run(gateStatus);
+  db.prepare(
+    "INSERT INTO sessions (id, project_id, status, pid) VALUES ('orphaned', 'test', 'running', 99999999)",
+  ).run();
+
+  recoverOrphanedSessions(db);
+
+  const gated = db
+    .prepare("SELECT status, gate_status FROM sessions WHERE id = 'gated'")
+    .get() as { status: string; gate_status: string | null };
+  const orphaned = db
+    .prepare("SELECT status FROM sessions WHERE id = 'orphaned'")
+    .get() as { status: string };
+
+  assert.equal(gated.status, "paused");
+  assert.equal(gated.gate_status, gateStatus);
+  assert.equal(orphaned.status, "failed");
 });

@@ -177,6 +177,26 @@ test("sessions PATCH resolves gates through a dedicated action", () => {
   );
 });
 
+test("process manager resolves persisted gates without the normal send queue", () => {
+  const source = readRepoFile("src/core/process-manager.ts");
+
+  assert.match(
+    source,
+    /resolveGate[\s\S]*resolveControlPlaneGate/,
+    "resolveGate should clear persisted gate state through the control-plane helper",
+  );
+  assert.match(
+    source,
+    /resolveGate[\s\S]*ensureProcess/,
+    "resolveGate should recreate a process when memory was lost after restart",
+  );
+  assert.doesNotMatch(
+    source,
+    /resolveGate[\s\S]*messageQueues\.set/,
+    "resolveGate should not enqueue approval replies behind normal messages",
+  );
+});
+
 test("kanban task surfaces render control-plane state", () => {
   const card = readRepoFile("src/components/kanban/task-card.tsx");
   const dialog = readRepoFile("src/components/kanban/task-detail-dialog.tsx");
