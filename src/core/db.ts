@@ -37,6 +37,7 @@ export function getDb(): Database.Database {
   _db.pragma("foreign_keys = ON");
   _db.exec(SCHEMA);
   migrateTasksV2(_db);
+  migrateControlPlaneColumns(_db);
 
   // Migrate: add claude_session_id column if missing
   try {
@@ -70,6 +71,8 @@ export function getDb(): Database.Database {
         agent_api_version TEXT NOT NULL DEFAULT '',
         agent_base_url TEXT NOT NULL DEFAULT '${DEFAULT_API_BASE_URL}',
         agent_max_tokens INTEGER NOT NULL DEFAULT ${DEFAULT_API_MAX_TOKENS},
+        current_stage TEXT,
+        gate_status TEXT,
         prompt TEXT,
         exit_code INTEGER, log_path TEXT,
         started_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -173,6 +176,7 @@ export function getDb(): Database.Database {
   } catch {
     // Column already exists
   }
+  migrateControlPlaneColumns(_db);
 
   // Migrate: update tasks CHECK constraint to include 'review' and 'blocked'
   try {
@@ -191,6 +195,8 @@ export function getDb(): Database.Database {
         session_id TEXT,
         sort_order INTEGER NOT NULL DEFAULT 0,
         prompt TEXT,
+        current_stage TEXT,
+        gate_status TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now')),
         completed_at TEXT
@@ -226,6 +232,12 @@ export function migrateTasksV2(db: Database.Database): void {
   if (!has("fail_reason")) {
     db.exec("ALTER TABLE tasks ADD COLUMN fail_reason TEXT");
   }
+  if (!has("current_stage")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN current_stage TEXT");
+  }
+  if (!has("gate_status")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN gate_status TEXT");
+  }
 
   // Status CHECK widening: SQLite cannot ALTER CHECK; recreate the table only if old CHECK is detected.
   const stmt = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get() as { sql: string } | undefined;
@@ -245,12 +257,14 @@ export function migrateTasksV2(db: Database.Database): void {
         blocked_by TEXT,
         sandbox_iterations INTEGER NOT NULL DEFAULT 0,
         fail_reason TEXT,
+        current_stage TEXT,
+        gate_status TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now')),
         completed_at TEXT
       );
-      INSERT INTO tasks_new (id, project_id, title, description, status, priority, worktree_name, session_id, sort_order, prompt, blocked_by, sandbox_iterations, fail_reason, created_at, updated_at, completed_at)
-      SELECT id, project_id, title, description, status, priority, worktree_name, session_id, sort_order, prompt, NULL, 0, NULL, created_at, updated_at, completed_at
+      INSERT INTO tasks_new (id, project_id, title, description, status, priority, worktree_name, session_id, sort_order, prompt, blocked_by, sandbox_iterations, fail_reason, current_stage, gate_status, created_at, updated_at, completed_at)
+      SELECT id, project_id, title, description, status, priority, worktree_name, session_id, sort_order, prompt, blocked_by, sandbox_iterations, fail_reason, current_stage, gate_status, created_at, updated_at, completed_at
       FROM tasks;
       DROP TABLE tasks;
       ALTER TABLE tasks_new RENAME TO tasks;
@@ -258,6 +272,20 @@ export function migrateTasksV2(db: Database.Database): void {
       CREATE INDEX IF NOT EXISTS idx_tasks_sort ON tasks(status, sort_order);
       CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id, status);
     `);
+  }
+}
+
+export function migrateControlPlaneColumns(db: Database.Database): void {
+  for (const table of ["tasks", "sessions"]) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    const has = (name: string) => cols.some((col) => col.name === name);
+
+    if (!has("current_stage")) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN current_stage TEXT`);
+    }
+    if (!has("gate_status")) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN gate_status TEXT`);
+    }
   }
 }
 
