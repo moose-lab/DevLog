@@ -176,3 +176,16 @@ test("sessions PATCH resolves gates through a dedicated action", () => {
     "resolve_gate must stay isolated from normal queued send messages",
   );
 });
+
+test("kanban task surfaces render control-plane state", () => {
+  const card = readRepoFile("src/components/kanban/task-card.tsx");
+  const dialog = readRepoFile("src/components/kanban/task-detail-dialog.tsx");
+
+  assert.match(card, /parseGateStatus/, "task cards should parse persisted gate state");
+  assert.match(card, /needs-input/, "task cards should show a needs-input badge");
+  assert.match(card, /current_stage/, "task cards should render the current stage");
+
+  assert.match(dialog, /parseGateStatus/, "task detail should parse persisted gate state");
+  assert.match(dialog, /action:\s*"resolve_gate"/, "task detail replies should call resolve_gate");
+  assert.match(dialog, /gateStatus\.options\.map/, "task detail should render gate option buttons");
+});
