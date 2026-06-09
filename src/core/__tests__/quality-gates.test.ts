@@ -221,3 +221,24 @@ test("session surfaces render control-plane state", () => {
   assert.match(card, /current_stage/, "session cards should pass current stage");
   assert.match(detail, /gate_status/, "session detail should pass gate state to the header indicator");
 });
+
+test("task and session lists refresh on control-plane stream events", () => {
+  const tasks = readRepoFile("src/hooks/use-tasks.ts");
+  const sessions = readRepoFile("src/hooks/use-sessions.ts");
+
+  for (const [name, source] of [
+    ["use-tasks", tasks],
+    ["use-sessions", sessions],
+  ] as const) {
+    assert.match(
+      source,
+      /new EventSource\("\/api\/devlog\/stream"\)/,
+      `${name} should subscribe to the global DevLog stream`,
+    );
+    assert.match(
+      source,
+      /control_plane_stage[\s\S]*control_plane_gate[\s\S]*control_plane_gate_resolved/,
+      `${name} should react to all control-plane event types`,
+    );
+  }
+});
