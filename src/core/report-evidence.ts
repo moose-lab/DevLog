@@ -4,6 +4,7 @@ import type {
   ReportTask,
 } from "./report-summary";
 import type { SessionStatus, TaskStatus } from "./types-dashboard";
+import { localDateKey, parseDbTimestamp } from "./report-dates";
 
 export type HumanReportSourceType = "task" | "session";
 export type HumanReportRiskSeverity = "blocked" | "failed";
@@ -180,27 +181,16 @@ function sessionTouchedInRange(session: ReportSession, range: ReportRange): bool
 }
 
 function dateInRange(value: string | null | undefined, range: ReportRange): boolean {
-  const key = dateKey(value);
+  const key = localDateKey(value);
   return Boolean(key && key >= range.startDate && key <= range.endDate);
-}
-
-function dateKey(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
-  return match?.[1] ?? null;
 }
 
 function sessionRuntimeMinutes(session: ReportSession): number | null {
   if (!session.ended_at) return null;
-  const started = parseDate(session.started_at);
-  const ended = parseDate(session.ended_at);
+  const started = parseDbTimestamp(session.started_at);
+  const ended = parseDbTimestamp(session.ended_at);
   if (!started || !ended) return null;
   return Math.max(0, Math.round((ended.getTime() - started.getTime()) / 60_000));
-}
-
-function parseDate(value: string): Date | null {
-  const date = new Date(value.includes("T") ? value : value.replace(" ", "T"));
-  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function previewText(value: string | null | undefined): string | null {

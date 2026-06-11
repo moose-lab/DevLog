@@ -137,7 +137,9 @@ test("buildReportSummary supports weekly and monthly report windows", () => {
       id: "sunday",
       title: "Sunday release check",
       status: "review",
-      updated_at: "2026-05-31 16:00:00",
+      // 08:00 UTC = 16:00 Asia/Shanghai — still Sunday in the local zone
+      // that reports bucket by (16:00 UTC would already be local Monday).
+      updated_at: "2026-05-31 08:00:00",
     }),
     task({
       id: "month-only",
