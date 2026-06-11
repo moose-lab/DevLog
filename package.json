@@ -16,6 +16,7 @@
   ],
   "scripts": {
     "prepare": "husky",
+    "prepublishOnly": "tsup",
     "dev": "next dev",
     "build": "next build",
     "build:cli": "tsup",
