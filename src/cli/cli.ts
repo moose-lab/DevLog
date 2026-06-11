@@ -66,6 +66,7 @@ const KNOWN_COMMANDS = [
   "statusline",
   "setup-statusline",
   "setup-tmux",
+  "help",
 ];
 
 function getGlobalOpts(): GlobalOptions {
@@ -104,15 +105,29 @@ program.hook("preAction", () => {
   initOutput({ json: !!opts.json, quiet: !!opts.quiet });
 });
 
-// ── Default: `devlog` with no args → dashboard ──────────
-program.action(async () => {
-  const globalOpts = getGlobalOpts();
-  try {
-    await dashboardCommand(globalOpts);
-  } catch (err) {
-    handleError(err, globalOpts);
-  }
-});
+// ── Default: `devlog` → dashboard, `devlog <ref>` → show ─
+// The optional [ref] argument must be declared: commander 14 rejects
+// undeclared extra words with a hard "too many arguments" error (IM-15).
+program
+  .argument(
+    "[ref]",
+    "Session number (1, 2, 3) or ID prefix — shorthand for `devlog show <ref>`"
+  )
+  .action(async (ref: string | undefined) => {
+    if (ref === "help") {
+      program.help();
+    }
+    const globalOpts = getGlobalOpts();
+    try {
+      if (ref) {
+        await showCommand(ref, { limit: "50" }, globalOpts);
+      } else {
+        await dashboardCommand(globalOpts);
+      }
+    } catch (err) {
+      handleError(err, globalOpts);
+    }
+  });
 
 // ── devlog serve ─────────────────────────────────────────
 program

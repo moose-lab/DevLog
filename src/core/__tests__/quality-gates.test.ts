@@ -242,3 +242,20 @@ test("task and session lists refresh on control-plane stream events", () => {
     );
   }
 });
+
+test("the default CLI command declares the optional session ref (IM-15)", () => {
+  const source = readRepoFile("src/cli/cli.ts");
+
+  // commander 14 hard-errors with "too many arguments" for undeclared extra
+  // words, so `devlog <id>` must be a declared default argument.
+  assert.match(
+    source,
+    /\.argument\(\s*"\[ref\]"/,
+    "default command should declare an optional [ref] argument",
+  );
+  assert.match(
+    source,
+    /KNOWN_COMMANDS = \[[\s\S]*"help"[\s\S]*\]/,
+    "'help' must be a known command so the did-you-mean interceptor skips it",
+  );
+});
