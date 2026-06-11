@@ -134,13 +134,8 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
         meta.costByModel[m] = (meta.costByModel[m] || 0) + event.costUSD;
       }
 
-      // Duration from system turn_duration events
-      if (event.type === "system" && event.subtype === "turn_duration") {
-        const dur = (event as Record<string, unknown>).durationMs;
-        if (typeof dur === "number") {
-          meta.totalDurationMs += dur;
-        }
-      }
+      // Duration: one generic read covers turn_duration system events too —
+      // a special-cased branch on top of this double-counted them (IM-1).
       if (event.durationMs && typeof event.durationMs === "number") {
         meta.totalDurationMs += event.durationMs;
       }
