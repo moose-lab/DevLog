@@ -280,18 +280,6 @@ function normalizeEvent(
       }
     }
 
-    if (typeof content === "string") {
-      events.push({
-        id: baseId,
-        sessionId,
-        timestamp,
-        role: role,
-        type: "message",
-        content: content,
-        raw,
-      });
-    }
-
     if (events.length === 0) {
       events.push({
         id: baseId,
@@ -303,14 +291,20 @@ function normalizeEvent(
         raw,
       });
     }
-  } else if (role === "human" && typeof content === "string") {
+  } else if (role && typeof content === "string") {
+    // Legacy string-content lines (both roles) — this branch was previously
+    // nested inside the array case and human-only, so assistant messages in
+    // this shape produced zero events (IM-2).
     events.push({
       id: baseId,
       sessionId,
       timestamp,
-      role: "human",
+      role: role,
       type: "message",
       content: content,
+      costUSD: raw.costUSD,
+      durationMs: raw.durationMs,
+      model,
       raw,
     });
   } else if (raw.type === "summary") {

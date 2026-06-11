@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { scanSession } from "../parser";
+import { parseSessionFile, scanSession } from "../parser";
 
 /**
  * Regression tests for the scanSession/parseSessionFile findings of
@@ -17,6 +17,42 @@ function makeJsonl(lines: unknown[]): { path: string; cleanup: () => void } {
   writeFileSync(path, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
   return { path, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
+
+test("legacy string-content messages produce events for both roles (IM-2)", async () => {
+  const { path, cleanup } = makeJsonl([
+    // Legacy format: top-level string content
+    {
+      type: "assistant",
+      content: "plain legacy assistant text",
+      timestamp: "2026-06-01T10:00:00.000Z",
+    },
+    // Real format with string (non-array) message content
+    {
+      type: "assistant",
+      message: { role: "assistant", content: "string message content" },
+      timestamp: "2026-06-01T10:00:01.000Z",
+    },
+    {
+      type: "user",
+      content: "legacy human text",
+      timestamp: "2026-06-01T10:00:02.000Z",
+    },
+  ]);
+  try {
+    const events = await parseSessionFile(path, "s1");
+    assert.equal(events.length, 3);
+    assert.deepEqual(
+      events.map((e) => [e.role, e.content]),
+      [
+        ["assistant", "plain legacy assistant text"],
+        ["assistant", "string message content"],
+        ["human", "legacy human text"],
+      ]
+    );
+  } finally {
+    cleanup();
+  }
+});
 
 test("turn durations are counted exactly once (IM-1)", async () => {
   const { path, cleanup } = makeJsonl([
