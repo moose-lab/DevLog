@@ -167,6 +167,9 @@ export async function onSessionExit(sessionId: string): Promise<void> {
 
   const failedExit = isFailedSessionExit(session.exit_code);
 
+  // Clean exit without changes is deliberately left alone: the session goes
+  // idle and can take follow-up instructions, so the human decides whether
+  // the task is done — auto-routing here would close work that isn't.
   if (hasChanges && task.status === "in_progress") {
     db.prepare(
       "UPDATE tasks SET status = 'review', updated_at = datetime('now') WHERE id = ?"

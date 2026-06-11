@@ -135,7 +135,6 @@ export function getDb(): Database.Database {
   } catch {
     // Column already exists
   }
-  migrateControlPlaneColumns(_db);
 
   // Recover orphaned sessions on first access
   if (!_recovered) {
