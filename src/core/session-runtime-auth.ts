@@ -23,6 +23,23 @@ import {
   LOCAL_CLI_AGENT_DEFINITIONS,
   LOCAL_CLI_AGENT_IDS,
 } from "./local-cli-agent-definitions";
+import { validateAgentConnectionBaseUrl } from "./api-provider-runtime";
+
+/**
+ * Local-CLI env values named *_BASE_URL redirect the agent's provider
+ * traffic, so they must pass the same SSRF validation as direct provider
+ * base URLs before they reach the child process env (IM-21).
+ */
+function dropInvalidBaseUrls(env: Record<string, string>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (key.endsWith("_BASE_URL") && validateAgentConnectionBaseUrl(value).error) {
+      continue;
+    }
+    result[key] = value;
+  }
+  return result;
+}
 
 export type SessionRuntimeAuthMode = "local-cli" | "anthropic-api-key";
 export type LegacySessionRuntimeAuthMode = "backend-oauth" | "agent-api-key";
@@ -301,11 +318,13 @@ export function resolveSessionRuntimeAuthConfig(
   const localCliAgent = findLocalCliAgent(localCliAgentId);
   const localCliAgentEnv =
     mode === "local-cli"
-      ? normalizeLocalCliAgentEnv({
-          [localCliAgentId]: isRecord(input.local_cli_agent_env)
-            ? input.local_cli_agent_env
-            : {},
-        })[localCliAgentId] ?? {}
+      ? dropInvalidBaseUrls(
+          normalizeLocalCliAgentEnv({
+            [localCliAgentId]: isRecord(input.local_cli_agent_env)
+              ? input.local_cli_agent_env
+              : {},
+          })[localCliAgentId] ?? {},
+        )
       : {};
   const option =
     SESSION_RUNTIME_AUTH_OPTIONS.find((candidate) => candidate.id === mode) ??

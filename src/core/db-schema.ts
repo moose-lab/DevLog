@@ -16,8 +16,9 @@ import {
   DEFAULT_LOCAL_CLI_REASONING,
 } from "./local-cli-agent-definitions";
 
-export const SCHEMA = `
-CREATE TABLE IF NOT EXISTS tasks (
+/** Canonical tasks table DDL; pass a different name when rebuilding in place. */
+export function tasksTableDdl(tableName = "tasks"): string {
+  return `CREATE TABLE IF NOT EXISTS ${tableName} (
   id TEXT PRIMARY KEY DEFAULT (hex(randomblob(8))),
   project_id TEXT NOT NULL DEFAULT 'videoclaw',
   title TEXT NOT NULL,
@@ -36,9 +37,12 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   completed_at TEXT
-);
+);`;
+}
 
-CREATE TABLE IF NOT EXISTS sessions (
+/** Canonical sessions table DDL; pass a different name when rebuilding in place. */
+export function sessionsTableDdl(tableName = "sessions"): string {
+  return `CREATE TABLE IF NOT EXISTS ${tableName} (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL DEFAULT 'videoclaw',
   task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
@@ -67,7 +71,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   log_path TEXT,
   started_at TEXT NOT NULL DEFAULT (datetime('now')),
   ended_at TEXT
-);
+);`;
+}
+
+export const SCHEMA = `
+${tasksTableDdl()}
+
+${sessionsTableDdl()}
 
 CREATE TABLE IF NOT EXISTS file_locks (
   id TEXT PRIMARY KEY DEFAULT (hex(randomblob(8))),

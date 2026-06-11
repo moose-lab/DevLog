@@ -4,6 +4,7 @@ import { homedir } from "os";
 import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import chalk from "chalk";
+import { resolvePackageRoot } from "../lib/package-root.js";
 
 interface Hook {
   type: string;
@@ -140,11 +141,13 @@ export async function setupTmuxCommand(): Promise<void> {
   const destPath = join(destDir, "tmux-claude-status.sh");
   mkdirSync(destDir, { recursive: true });
 
-  // Resolve the source script relative to this file (dist/commands/setup-tmux.js)
-  const thisFile = fileURLToPath(import.meta.url);
-  const srcPath = join(dirname(thisFile), "..", "..", "scripts", "tmux-claude-status.sh");
+  // Resolve the source script from the package root (works from the bundled dist)
+  const packageRoot = resolvePackageRoot(dirname(fileURLToPath(import.meta.url)));
+  const srcPath = packageRoot
+    ? join(packageRoot, "scripts", "tmux-claude-status.sh")
+    : null;
 
-  if (existsSync(srcPath)) {
+  if (srcPath && existsSync(srcPath)) {
     copyFileSync(srcPath, destPath);
   } else {
     // Fallback: generate the script inline with hardcoded DEVLOG_BIN

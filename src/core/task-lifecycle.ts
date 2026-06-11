@@ -123,6 +123,15 @@ export function validateTaskSessionLaunch(
   return { ok: true, task };
 }
 
+/**
+ * exit_code semantics (IM-6): a number is a real exit status; NULL means the
+ * code was never recorded (signal kill, legacy row) and must not be read as
+ * failure — that routed every clean exit to 'blocked'.
+ */
+export function isFailedSessionExit(exitCode: number | null): boolean {
+  return typeof exitCode === "number" && exitCode !== 0;
+}
+
 export async function onSessionExit(sessionId: string): Promise<void> {
   const db = getDb();
   const session = db
@@ -156,11 +165,16 @@ export async function onSessionExit(sessionId: string): Promise<void> {
     }
   }
 
+  const failedExit = isFailedSessionExit(session.exit_code);
+
+  // Clean exit without changes is deliberately left alone: the session goes
+  // idle and can take follow-up instructions, so the human decides whether
+  // the task is done — auto-routing here would close work that isn't.
   if (hasChanges && task.status === "in_progress") {
     db.prepare(
       "UPDATE tasks SET status = 'review', updated_at = datetime('now') WHERE id = ?"
     ).run(task.id);
-  } else if (!hasChanges && session.exit_code !== 0 && task.status === "in_progress") {
+  } else if (!hasChanges && failedExit && task.status === "in_progress") {
     db.prepare(
       "UPDATE tasks SET status = 'blocked', updated_at = datetime('now') WHERE id = ?"
     ).run(task.id);

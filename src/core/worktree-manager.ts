@@ -3,6 +3,7 @@ import { promisify } from "util";
 import path from "path";
 import type { Worktree } from "./types-dashboard";
 import { getRepoRoot } from "./project-adapter";
+import { validateBranchName, validateWorktreeName } from "./worktree-validation";
 
 const execFileAsync = promisify(execFile);
 
@@ -50,13 +51,27 @@ export async function createWorktree(
   baseBranch?: string,
   projectId?: string
 ): Promise<Worktree> {
+  const nameCheck = validateWorktreeName(name);
+  if (!nameCheck.ok) throw new Error(nameCheck.error);
+  const branchCheck = validateBranchName(branch);
+  if (!branchCheck.ok) throw new Error(branchCheck.error);
+  if (baseBranch !== undefined) {
+    const baseCheck = validateBranchName(baseBranch);
+    if (!baseCheck.ok) throw new Error(baseCheck.error);
+  }
+
   const repoRoot = getRepoRoot(projectId);
-  const worktreePath = path.join(repoRoot, ".worktrees", name);
+  const worktreesBase = path.join(repoRoot, ".worktrees");
+  const worktreePath = path.join(worktreesBase, name);
+  const relative = path.relative(worktreesBase, worktreePath);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Invalid worktree name: resolves outside the worktrees directory");
+  }
 
   if (baseBranch) {
-    await git(projectId, "worktree", "add", "-b", branch, worktreePath, baseBranch);
+    await git(projectId, "worktree", "add", "-b", branch, "--", worktreePath, baseBranch);
   } else {
-    await git(projectId, "worktree", "add", "-b", branch, worktreePath);
+    await git(projectId, "worktree", "add", "-b", branch, "--", worktreePath);
   }
 
   const worktrees = await listWorktrees(projectId);

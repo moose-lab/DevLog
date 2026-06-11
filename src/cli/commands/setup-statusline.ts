@@ -4,6 +4,7 @@ import { homedir } from "os";
 import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import chalk from "chalk";
+import { resolvePackageRoot } from "../lib/package-root.js";
 import { ensureInit } from "../../core/config.js";
 import { discoverProjects, computeStats } from "../../core/discovery.js";
 import { updateCacheFromStats } from "../../core/cache.js";
@@ -117,10 +118,12 @@ export async function setupStatuslineCommand(): Promise<void> {
   mkdirSync(binDir, { recursive: true });
 
   // Copy source script or generate inline
-  const thisFile = fileURLToPath(import.meta.url);
-  const scriptSrc = join(dirname(thisFile), "..", "..", "scripts", "tmux-claude-status.sh");
+  const packageRoot = resolvePackageRoot(dirname(fileURLToPath(import.meta.url)));
+  const scriptSrc = packageRoot
+    ? join(packageRoot, "scripts", "tmux-claude-status.sh")
+    : null;
 
-  if (existsSync(scriptSrc)) {
+  if (scriptSrc && existsSync(scriptSrc)) {
     copyFileSync(scriptSrc, scriptDest);
   } else {
     writeFileSync(scriptDest, generateTmuxScript(devlogBin), "utf-8");

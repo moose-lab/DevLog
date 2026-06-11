@@ -5,6 +5,7 @@ import { SCHEMA } from "../db-schema";
 import {
   applyControlPlaneEvent,
   parseControlPlaneProtocolText,
+  peekControlPlaneGate,
   resolveControlPlaneGate,
 } from "../control-plane-protocol";
 
@@ -147,4 +148,46 @@ test("resolveControlPlaneGate clears gate state without clearing current stage",
   assert.equal(task.current_stage, "2/3 · approval");
   assert.equal(session.gate_status, null);
   assert.equal(task.gate_status, null);
+});
+
+test("peekControlPlaneGate reads the pending gate without clearing it (CR-4)", () => {
+  const db = makeDb();
+  db.prepare("INSERT INTO tasks (id, project_id, title) VALUES ('task-1', 'test', 'Task')").run();
+  db.prepare(
+    "INSERT INTO sessions (id, project_id, task_id, status) VALUES ('session-1', 'test', 'task-1', 'paused')",
+  ).run();
+  const applied = applyControlPlaneEvent(
+    db,
+    "session-1",
+    {
+      type: "gate",
+      question: "Continue?",
+      options: ["Continue"],
+      stage: "2/3 · approval",
+    },
+    {
+      now: () => new Date("2026-06-08T08:00:00.000Z"),
+      createId: () => "gate-test",
+    },
+  );
+  assert.ok(applied?.gateStatus);
+
+  // Peeking must not consume the gate — delivery may still fail, and the
+  // human's answer would otherwise be lost with the UI reporting success.
+  const peeked = peekControlPlaneGate(db, "session-1");
+  assert.deepEqual(peeked?.gateStatus, applied.gateStatus);
+
+  const session = db
+    .prepare("SELECT gate_status FROM sessions WHERE id = 'session-1'")
+    .get() as { gate_status: string | null };
+  const task = db
+    .prepare("SELECT gate_status FROM tasks WHERE id = 'task-1'")
+    .get() as { gate_status: string | null };
+  assert.notEqual(session.gate_status, null);
+  assert.notEqual(task.gate_status, null);
+
+  // Resolving afterwards clears it exactly once.
+  const resolved = resolveControlPlaneGate(db, "session-1");
+  assert.deepEqual(resolved?.gateStatus, applied.gateStatus);
+  assert.equal(peekControlPlaneGate(db, "session-1"), null);
 });

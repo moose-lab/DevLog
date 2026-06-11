@@ -1,8 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  MAX_WATCHDOG_RESTARTS,
   SESSION_UNRESPONSIVE_MS,
   buildClaudeProcessArgs,
+  canDeliverGateResponse,
   buildLocalCliProcessLaunch,
   needsBrowserApiKeyForWatchdogRestart,
   parseClaudeBinaryPath,
@@ -63,6 +68,57 @@ test("shouldRestartUnresponsiveSession only restarts live stale processes", () =
     }),
     false,
   );
+});
+
+test("idle persistent sessions are never watchdog-restarted (CR-3)", () => {
+  const now = Date.parse("2026-05-22T12:00:00.000Z");
+
+  // Stale but not processing: a persistent session waiting for the next
+  // user message must not be churned every interval.
+  assert.equal(
+    shouldRestartUnresponsiveSession({
+      lastActivityAt: now - SESSION_UNRESPONSIVE_MS - 1,
+      now,
+      killed: false,
+      isProcessing: false,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldRestartUnresponsiveSession({
+      lastActivityAt: now - SESSION_UNRESPONSIVE_MS - 1,
+      now,
+      killed: false,
+      isProcessing: true,
+    }),
+    true,
+  );
+});
+
+test("watchdog restart budget is bounded (CR-3)", () => {
+  assert.equal(MAX_WATCHDOG_RESTARTS >= 1 && MAX_WATCHDOG_RESTARTS <= 3, true);
+});
+
+test("gate responses are only deliverable while agent stdin is open (CR-4)", () => {
+  const withStdin = (stdin: { destroyed: boolean; writableEnded: boolean } | null) => ({
+    proc: { stdin },
+  });
+
+  assert.equal(
+    canDeliverGateResponse(withStdin({ destroyed: false, writableEnded: false })),
+    true,
+  );
+  // Plain-stdin runners: stdin.end() was called on the original send.
+  assert.equal(
+    canDeliverGateResponse(withStdin({ destroyed: false, writableEnded: true })),
+    false,
+  );
+  assert.equal(
+    canDeliverGateResponse(withStdin({ destroyed: true, writableEnded: false })),
+    false,
+  );
+  assert.equal(canDeliverGateResponse(withStdin(null)), false);
 });
 
 test("parseClaudeBinaryPath ignores shell alias descriptions", () => {
@@ -236,6 +292,35 @@ test("buildLocalCliProcessLaunch builds Codex stdin runner args", () => {
 });
 
 test("buildLocalCliProcessLaunch honors selected CLI binary overrides", () => {
+  const dir = mkdtempSync(join(tmpdir(), "devlog-bin-override-"));
+  const codexBin = join(dir, "codex");
+  try {
+    writeFileSync(codexBin, "#!/bin/sh\n", { mode: 0o755 });
+    const launch = buildLocalCliProcessLaunch(
+      resolveSessionRuntimeAuthConfig({
+        session_auth_mode: "local-cli",
+        local_cli_agent_id: "codex",
+        local_cli_agent_env: {
+          CODEX_BIN: codexBin,
+        },
+      }),
+      null,
+      ["Read"],
+      "/repo",
+      () => null,
+    );
+
+    assert.equal(launch.ok, true);
+    if (!launch.ok) return;
+    assert.equal(launch.command, codexBin);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildLocalCliProcessLaunch ignores overrides pointing at foreign binaries (CR-7)", () => {
+  // process.execPath exists but is the node binary, not the agent CLI —
+  // exactly the arbitrary-binary gadget from the review.
   const launch = buildLocalCliProcessLaunch(
     resolveSessionRuntimeAuthConfig({
       session_auth_mode: "local-cli",
@@ -250,9 +335,9 @@ test("buildLocalCliProcessLaunch honors selected CLI binary overrides", () => {
     () => null,
   );
 
-  assert.equal(launch.ok, true);
-  if (!launch.ok) return;
-  assert.equal(launch.command, process.execPath);
+  assert.equal(launch.ok, false);
+  if (launch.ok) return;
+  assert.match(launch.error, /not installed or not on PATH/i);
 });
 
 test("buildLocalCliProcessLaunch rejects missing CLI binary overrides", () => {
@@ -295,23 +380,30 @@ test("validateSessionRuntimeProcessLaunch rejects missing CLI binary overrides b
 });
 
 test("buildLocalCliProcessLaunch honors Claude binary overrides", () => {
-  const launch = buildLocalCliProcessLaunch(
-    resolveSessionRuntimeAuthConfig({
-      session_auth_mode: "local-cli",
-      local_cli_agent_id: "claude",
-      local_cli_agent_env: {
-        CLAUDE_BIN: process.execPath,
-      },
-    }),
-    null,
-    ["Read"],
-    "/repo",
-    () => null,
-  );
+  const dir = mkdtempSync(join(tmpdir(), "devlog-bin-override-"));
+  const claudeBin = join(dir, "claude");
+  try {
+    writeFileSync(claudeBin, "#!/bin/sh\n", { mode: 0o755 });
+    const launch = buildLocalCliProcessLaunch(
+      resolveSessionRuntimeAuthConfig({
+        session_auth_mode: "local-cli",
+        local_cli_agent_id: "claude",
+        local_cli_agent_env: {
+          CLAUDE_BIN: claudeBin,
+        },
+      }),
+      null,
+      ["Read"],
+      "/repo",
+      () => null,
+    );
 
-  assert.equal(launch.ok, true);
-  if (!launch.ok) return;
-  assert.equal(launch.command, process.execPath);
+    assert.equal(launch.ok, true);
+    if (!launch.ok) return;
+    assert.equal(launch.command, claudeBin);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("buildLocalCliProcessLaunch passes custom model ids to supported runners", () => {

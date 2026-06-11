@@ -9,10 +9,14 @@
   },
   "files": [
     "dist",
-    "scripts"
+    "scripts",
+    "!scripts/generate-test-data.ts",
+    "!scripts/task-launch-e2e.mjs",
+    "!scripts/task-launch-e2e-config.mjs"
   ],
   "scripts": {
     "prepare": "husky",
+    "prepublishOnly": "tsup",
     "dev": "next dev",
     "build": "next build",
     "build:cli": "tsup",

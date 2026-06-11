@@ -215,3 +215,27 @@ test("recoverOrphanedSessions preserves paused gated sessions", () => {
   assert.equal(gated.gate_status, gateStatus);
   assert.equal(orphaned.status, "failed");
 });
+
+test("recoverOrphanedSessions releases the linked in-progress task (IM-8)", () => {
+  const db = makeTestDb();
+  db.prepare(
+    "INSERT INTO tasks (id, project_id, title, status, session_id) VALUES ('task-1', 'test', 'Stranded task', 'in_progress', 'dead-session')",
+  ).run();
+  db.prepare(
+    "INSERT INTO sessions (id, project_id, task_id, status, pid) VALUES ('dead-session', 'test', 'task-1', 'running', 99999999)",
+  ).run();
+
+  recoverOrphanedSessions(db);
+
+  const session = db
+    .prepare("SELECT status FROM sessions WHERE id = 'dead-session'")
+    .get() as { status: string };
+  const task = db
+    .prepare("SELECT status, fail_reason FROM tasks WHERE id = 'task-1'")
+    .get() as { status: string; fail_reason: string | null };
+
+  assert.equal(session.status, "failed");
+  // The task must leave 'in_progress' so it can be relaunched or retried.
+  assert.equal(task.status, "fail");
+  assert.ok(task.fail_reason);
+});

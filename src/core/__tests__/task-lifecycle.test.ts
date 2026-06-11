@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { makeTestDb } from "./test-helpers";
 import {
+  isFailedSessionExit,
   markSessionFailedAndReleaseLinkedTask,
   validateTaskSessionLaunch,
 } from "../task-lifecycle";
@@ -120,4 +121,13 @@ test("session launch validation only allows executable tasks in the current proj
       error: "Task not found",
     },
   );
+});
+
+test("only a recorded non-zero exit code counts as a failed session exit (IM-6)", () => {
+  // NULL was previously read as failure, routing every clean exit to blocked
+  // because exit_code was never persisted.
+  assert.equal(isFailedSessionExit(null), false);
+  assert.equal(isFailedSessionExit(0), false);
+  assert.equal(isFailedSessionExit(1), true);
+  assert.equal(isFailedSessionExit(137), true);
 });

@@ -12,6 +12,7 @@ import {
 import {
   applyControlPlaneEvent,
   parseControlPlaneProtocolText,
+  peekControlPlaneGate,
   resolveControlPlaneGate,
   type ControlPlaneProtocolEvent,
   type ResolvedControlPlaneGate,
@@ -35,6 +36,7 @@ import {
   LOCAL_CLI_AGENT_DEFINITIONS,
 } from "./local-cli-agent-definitions";
 import { resolveExecutableOnPath } from "./local-cli-agents";
+import { isValidClaudeSessionId } from "./vcc";
 
 export function parseClaudeBinaryPath(output: string): string | null {
   for (const rawLine of output.split("\n")) {
@@ -167,19 +169,30 @@ interface SessionProcess {
 
 export const WATCHDOG_INTERVAL_MS = 30000;
 export const SESSION_UNRESPONSIVE_MS = 3 * 60 * 1000;
+/** Watchdog restarts per session before the turn is failed instead (CR-3). */
+export const MAX_WATCHDOG_RESTARTS = 2;
 
 export function shouldRestartUnresponsiveSession({
   lastActivityAt,
   now,
   killed,
   paused = false,
+  isProcessing = true,
 }: {
   lastActivityAt: number;
   now: number;
   killed: boolean;
   paused?: boolean;
+  isProcessing?: boolean;
 }): boolean {
-  return now - lastActivityAt > SESSION_UNRESPONSIVE_MS && !killed && !paused;
+  // An idle persistent session has nothing to restart — only stall detection
+  // during an in-flight turn is meaningful (CR-3 churned idle sessions).
+  return (
+    isProcessing &&
+    now - lastActivityAt > SESSION_UNRESPONSIVE_MS &&
+    !killed &&
+    !paused
+  );
 }
 
 export function needsBrowserApiKeyForWatchdogRestart(
@@ -187,6 +200,19 @@ export function needsBrowserApiKeyForWatchdogRestart(
   isProcessing: boolean,
 ): boolean {
   return isProcessing && sessionAuthMode === "anthropic-api-key";
+}
+
+/**
+ * A gate response can only reach the agent while its stdin is still open.
+ * Plain-stdin runners get their stdin closed by the original send, so a
+ * paused process in that state can never receive the answer (CR-4).
+ */
+export function canDeliverGateResponse(sp: {
+  proc: { stdin: { destroyed: boolean; writableEnded: boolean } | null };
+}): boolean {
+  return Boolean(
+    sp.proc.stdin && !sp.proc.stdin.destroyed && !sp.proc.stdin.writableEnded,
+  );
 }
 
 export function buildClaudeProcessArgs(
@@ -528,6 +554,7 @@ class ProcessManager {
   private sessions = new Map<string, SessionProcess>();
   private messageQueues = new Map<string, QueuedMessage[]>();
   private providerProcessing = new Set<string>();
+  private watchdogRestarts = new Map<string, number>();
 
   constructor() {
     const watchdog = setInterval(
@@ -562,8 +589,36 @@ class ProcessManager {
           now,
           killed: sp.proc.killed,
           paused: sp.paused,
+          isProcessing: sp.isProcessing,
         })
       ) {
+        continue;
+      }
+
+      const restarts = (this.watchdogRestarts.get(sessionId) ?? 0) + 1;
+      this.watchdogRestarts.set(sessionId, restarts);
+      if (restarts > MAX_WATCHDOG_RESTARTS) {
+        const message = `Session ${sessionId.slice(0, 8)} stayed unresponsive after ${MAX_WATCHDOG_RESTARTS} watchdog restarts. Failing the turn instead of re-executing it again.`;
+        this.emitSystemLog("warning", sessionId, message, "[WATCHDOG]");
+
+        try {
+          sp.proc.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+        this.sessions.delete(sessionId);
+        this.messageQueues.delete(sessionId);
+        this.watchdogRestarts.delete(sessionId);
+
+        try {
+          const db = getDb();
+          markSessionFailedAndReleaseLinkedTask(db, sessionId, message);
+        } catch {
+          // ignore
+        }
+
+        streamManager.emit(sessionId, { type: "error", message });
+        streamManager.emit(sessionId, { type: "status", status: "failed" });
         continue;
       }
 
@@ -865,6 +920,7 @@ class ProcessManager {
     // Capture stderr for debugging
     if (proc.stderr) {
       proc.stderr.on("data", (chunk: Buffer) => {
+        sp.lastActivityAt = Date.now();
         const text = chunk.toString().trim();
         if (text) {
           // Log stderr but don't surface as errors unless critical
@@ -893,7 +949,14 @@ class ProcessManager {
     // Handle process close after stdout/stderr have flushed.
     proc.on("close", (code) => {
       this.flushGenericOutput(sessionId, sp);
-      this.sessions.delete(sessionId);
+
+      // After a kill→respawn, this close belongs to the replaced process;
+      // deleting unconditionally would evict the freshly respawned entry and
+      // leave a live process invisible to kill() and the watchdog (IM-5).
+      const isCurrent = this.sessions.get(sessionId) === sp;
+      if (isCurrent) {
+        this.sessions.delete(sessionId);
+      }
       this.emitSystemLog(
         code === 0 ? "success" : "warning",
         sessionId,
@@ -912,6 +975,12 @@ class ProcessManager {
         }
       }
 
+      // A stale close must not touch the session's live state — the
+      // respawned process owns status, exit_code, and task routing now.
+      if (!isCurrent) {
+        return;
+      }
+
       // If there was a turn in progress, notify about the interruption
       if (sp.isProcessing) {
         streamManager.emit(sessionId, {
@@ -922,13 +991,14 @@ class ProcessManager {
         });
       }
 
-      // Update status to idle (can spawn new process for next message)
+      // Update status to idle (can spawn new process for next message) and
+      // persist the exit code — task routing reads it on session exit (IM-6).
       const newStatus = "idle";
       let statusUpdated = false;
       try {
         const result = db.prepare(
-          "UPDATE sessions SET status = ?, pid = NULL WHERE id = ? AND status NOT IN ('completed', 'failed', 'killed')"
-        ).run(newStatus, sessionId);
+          "UPDATE sessions SET status = ?, pid = NULL, exit_code = ? WHERE id = ? AND status NOT IN ('completed', 'failed', 'killed')"
+        ).run(newStatus, code, sessionId);
         statusUpdated = result.changes > 0;
       } catch {
         // ignore
@@ -1085,8 +1155,11 @@ class ProcessManager {
       content: message,
     });
 
-    // Mark as processing
+    // Mark as processing. The activity clock starts at send time — without
+    // this, a turn whose first stdout takes >3m is killed by the watchdog
+    // and silently re-executed (CR-3).
     sp.isProcessing = true;
+    sp.lastActivityAt = Date.now();
     sp.textBuffer = "";
     sp.toolCalls = [];
 
@@ -1235,43 +1308,61 @@ class ProcessManager {
     }
 
     const db = getDb();
-    const resolved = resolveControlPlaneGate(db, sessionId);
-    if (!resolved) {
+    const pending = peekControlPlaneGate(db, sessionId);
+    if (!pending) {
       return { ok: false, error: "no pending gate" };
     }
 
-    const insertResult = db.prepare(
-      "INSERT INTO session_messages (session_id, role, content) VALUES (?, 'user', ?)",
-    ).run(sessionId, trimmed);
-    const messageId = Number(insertResult.lastInsertRowid);
-
-    streamManager.emit(sessionId, {
-      type: "message",
-      id: messageId,
-      role: "user",
-      content: trimmed,
-    });
-
     let sp = this.sessions.get(sessionId);
+
+    // A plain-stdin runner whose stdin was consumed by the original send can
+    // never read the answer — the SIGSTOPped process must be replaced with a
+    // fresh one rather than pretending the write succeeded (CR-4).
+    if (sp && !sp.proc.killed && !canDeliverGateResponse(sp)) {
+      try {
+        sp.proc.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      if (this.sessions.get(sessionId) === sp) {
+        this.sessions.delete(sessionId);
+      }
+      sp = undefined;
+    }
+
     if (!sp || sp.proc.killed) {
       sp = this.ensureProcess(sessionId) ?? undefined;
     }
 
-    if (sp && !sp.proc.killed) {
-      const requestId = sp.pendingPermission?.requestId ?? resolved.gateStatus.id;
-      sp.pendingPermission = null;
-      if (sp.paused) {
-        sp.proc.kill("SIGCONT");
-        sp.paused = false;
-      }
-      sp.isProcessing = true;
-      this.writeGateResponse(sp, trimmed);
-      streamManager.emit(sessionId, {
-        type: "permission_resolved",
-        request_id: requestId,
-        approved: true,
-      });
+    // IM-9: if the process could not be (re)created, keep the gate persisted
+    // and report failure instead of emitting a fake gate_resolved.
+    if (!sp || sp.proc.killed || !canDeliverGateResponse(sp)) {
+      return {
+        ok: false,
+        error:
+          "The agent process is unavailable and could not be restarted, so the gate response was not delivered. The gate is still pending — try again.",
+      };
     }
+
+    const requestId = sp.pendingPermission?.requestId ?? pending.gateStatus.id;
+    sp.pendingPermission = null;
+    if (sp.paused) {
+      sp.proc.kill("SIGCONT");
+      sp.paused = false;
+    }
+
+    // Delivery is possible — only now clear the persisted gate and record the
+    // response. writeMessage persists + emits the user message and uses the
+    // protocol-correct write (stdin.end for plain-stdin runners, which would
+    // otherwise block forever waiting for EOF).
+    const resolved = resolveControlPlaneGate(db, sessionId) ?? pending;
+    this.writeMessage(sp, trimmed);
+
+    streamManager.emit(sessionId, {
+      type: "permission_resolved",
+      request_id: requestId,
+      approved: true,
+    });
 
     db.prepare(
       "UPDATE sessions SET status = 'running' WHERE id = ? AND status = 'paused'",
@@ -1290,37 +1381,6 @@ class ProcessManager {
     streamManager.emit("global", { type: "status", status: "running" });
 
     return { ok: true };
-  }
-
-  private writeGateResponse(sp: SessionProcess, response: string): void {
-    if (!sp.proc.stdin || sp.proc.stdin.destroyed || sp.proc.stdin.writableEnded) {
-      this.emitSystemLog(
-        "warning",
-        sp.sessionId,
-        "Gate resolved, but agent stdin is no longer writable.",
-      );
-      return;
-    }
-
-    try {
-      if (sp.inputProtocol === "claude-stream-json") {
-        const inputMsg = JSON.stringify({
-          type: "user",
-          message: { role: "user", content: response },
-          session_id: sp.claudeSessionId ?? "default",
-          parent_tool_use_id: null,
-        });
-        sp.proc.stdin.write(inputMsg + "\n");
-        return;
-      }
-      sp.proc.stdin.write(response + "\n");
-    } catch (err) {
-      this.emitSystemLog(
-        "warning",
-        sp.sessionId,
-        `Failed to write gate response: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
   }
 
   private handleGenericOutputChunk(
@@ -1755,8 +1815,12 @@ class ProcessManager {
 
     // System events — capture session_id
     if (type === "system") {
-      if (subtype === "init" && event.session_id) {
-        sp.claudeSessionId = event.session_id as string;
+      if (
+        subtype === "init" &&
+        typeof event.session_id === "string" &&
+        isValidClaudeSessionId(event.session_id)
+      ) {
+        sp.claudeSessionId = event.session_id;
         const db = getDb();
         try {
           db.prepare(
@@ -1859,7 +1923,7 @@ class ProcessManager {
     if (type === "result") {
       const isError = event.is_error === true;
       const claudeSessionId = event.session_id as string | undefined;
-      if (claudeSessionId) {
+      if (claudeSessionId && isValidClaudeSessionId(claudeSessionId)) {
         sp.claudeSessionId = claudeSessionId;
         const db = getDb();
         try {
@@ -1891,8 +1955,9 @@ class ProcessManager {
         session_id: claudeSessionId,
       });
 
-      // Reset turn state
+      // Reset turn state; a completed turn restores the watchdog budget
       sp.isProcessing = false;
+      this.watchdogRestarts.delete(sessionId);
       sp.textBuffer = "";
       sp.toolCalls = [];
 

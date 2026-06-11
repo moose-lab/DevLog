@@ -5,6 +5,10 @@ import {
   getWorktreeFilesChanged,
 } from "@/core/worktree-manager";
 import { resolveProjectId } from "@/lib/api-utils";
+import {
+  validateBranchName,
+  validateWorktreeName,
+} from "@/core/worktree-validation";
 
 export async function GET(req: NextRequest) {
   try {
@@ -31,11 +35,21 @@ export async function POST(req: NextRequest) {
   try {
     const { name, branch, baseBranch } = await req.json();
 
-    if (!name || !branch) {
+    if (typeof name !== "string" || typeof branch !== "string" || !name || !branch) {
       return NextResponse.json(
         { error: "name and branch are required" },
         { status: 400 }
       );
+    }
+
+    for (const check of [
+      validateWorktreeName(name),
+      validateBranchName(branch),
+      ...(baseBranch !== undefined ? [validateBranchName(String(baseBranch))] : []),
+    ]) {
+      if (!check.ok) {
+        return NextResponse.json({ error: check.error }, { status: 400 });
+      }
     }
 
     const projectId = resolveProjectId(req);

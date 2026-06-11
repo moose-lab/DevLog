@@ -1,8 +1,18 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { existsSync, readFileSync, statSync } from "fs";
-import { join } from "path";
+import { isAbsolute, join, relative } from "path";
 import { getClaudeProjectsDir } from "./paths";
+
+/**
+ * claude_session_id is parsed from agent stdout, so it must stay a single
+ * path-safe token before reaching the filesystem or python3 argv (IM-19).
+ */
+const CLAUDE_SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+export function isValidClaudeSessionId(id: string): boolean {
+  return CLAUDE_SESSION_ID_PATTERN.test(id);
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -69,7 +79,15 @@ export async function compileSession(
   projectPath: string,
   grep?: string
 ): Promise<VccOutput> {
+  if (!isValidClaudeSessionId(claudeSessionId)) {
+    throw new Error("Invalid Claude session id");
+  }
+
   const jsonlPath = getJsonlPath(claudeSessionId, projectPath);
+  const containment = relative(getClaudeProjectsDir(), jsonlPath);
+  if (containment.startsWith("..") || isAbsolute(containment)) {
+    throw new Error("Invalid Claude session id");
+  }
 
   if (!existsSync(jsonlPath)) {
     return EMPTY;
