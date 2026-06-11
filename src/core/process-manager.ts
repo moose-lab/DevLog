@@ -12,6 +12,7 @@ import {
 import {
   applyControlPlaneEvent,
   parseControlPlaneProtocolText,
+  peekControlPlaneGate,
   resolveControlPlaneGate,
   type ControlPlaneProtocolEvent,
   type ResolvedControlPlaneGate,
@@ -199,6 +200,19 @@ export function needsBrowserApiKeyForWatchdogRestart(
   isProcessing: boolean,
 ): boolean {
   return isProcessing && sessionAuthMode === "anthropic-api-key";
+}
+
+/**
+ * A gate response can only reach the agent while its stdin is still open.
+ * Plain-stdin runners get their stdin closed by the original send, so a
+ * paused process in that state can never receive the answer (CR-4).
+ */
+export function canDeliverGateResponse(sp: {
+  proc: { stdin: { destroyed: boolean; writableEnded: boolean } | null };
+}): boolean {
+  return Boolean(
+    sp.proc.stdin && !sp.proc.stdin.destroyed && !sp.proc.stdin.writableEnded,
+  );
 }
 
 export function buildClaudeProcessArgs(
@@ -1280,43 +1294,61 @@ class ProcessManager {
     }
 
     const db = getDb();
-    const resolved = resolveControlPlaneGate(db, sessionId);
-    if (!resolved) {
+    const pending = peekControlPlaneGate(db, sessionId);
+    if (!pending) {
       return { ok: false, error: "no pending gate" };
     }
 
-    const insertResult = db.prepare(
-      "INSERT INTO session_messages (session_id, role, content) VALUES (?, 'user', ?)",
-    ).run(sessionId, trimmed);
-    const messageId = Number(insertResult.lastInsertRowid);
-
-    streamManager.emit(sessionId, {
-      type: "message",
-      id: messageId,
-      role: "user",
-      content: trimmed,
-    });
-
     let sp = this.sessions.get(sessionId);
+
+    // A plain-stdin runner whose stdin was consumed by the original send can
+    // never read the answer — the SIGSTOPped process must be replaced with a
+    // fresh one rather than pretending the write succeeded (CR-4).
+    if (sp && !sp.proc.killed && !canDeliverGateResponse(sp)) {
+      try {
+        sp.proc.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      if (this.sessions.get(sessionId) === sp) {
+        this.sessions.delete(sessionId);
+      }
+      sp = undefined;
+    }
+
     if (!sp || sp.proc.killed) {
       sp = this.ensureProcess(sessionId) ?? undefined;
     }
 
-    if (sp && !sp.proc.killed) {
-      const requestId = sp.pendingPermission?.requestId ?? resolved.gateStatus.id;
-      sp.pendingPermission = null;
-      if (sp.paused) {
-        sp.proc.kill("SIGCONT");
-        sp.paused = false;
-      }
-      sp.isProcessing = true;
-      this.writeGateResponse(sp, trimmed);
-      streamManager.emit(sessionId, {
-        type: "permission_resolved",
-        request_id: requestId,
-        approved: true,
-      });
+    // IM-9: if the process could not be (re)created, keep the gate persisted
+    // and report failure instead of emitting a fake gate_resolved.
+    if (!sp || sp.proc.killed || !canDeliverGateResponse(sp)) {
+      return {
+        ok: false,
+        error:
+          "The agent process is unavailable and could not be restarted, so the gate response was not delivered. The gate is still pending — try again.",
+      };
     }
+
+    const requestId = sp.pendingPermission?.requestId ?? pending.gateStatus.id;
+    sp.pendingPermission = null;
+    if (sp.paused) {
+      sp.proc.kill("SIGCONT");
+      sp.paused = false;
+    }
+
+    // Delivery is possible — only now clear the persisted gate and record the
+    // response. writeMessage persists + emits the user message and uses the
+    // protocol-correct write (stdin.end for plain-stdin runners, which would
+    // otherwise block forever waiting for EOF).
+    const resolved = resolveControlPlaneGate(db, sessionId) ?? pending;
+    this.writeMessage(sp, trimmed);
+
+    streamManager.emit(sessionId, {
+      type: "permission_resolved",
+      request_id: requestId,
+      approved: true,
+    });
 
     db.prepare(
       "UPDATE sessions SET status = 'running' WHERE id = ? AND status = 'paused'",
@@ -1335,37 +1367,6 @@ class ProcessManager {
     streamManager.emit("global", { type: "status", status: "running" });
 
     return { ok: true };
-  }
-
-  private writeGateResponse(sp: SessionProcess, response: string): void {
-    if (!sp.proc.stdin || sp.proc.stdin.destroyed || sp.proc.stdin.writableEnded) {
-      this.emitSystemLog(
-        "warning",
-        sp.sessionId,
-        "Gate resolved, but agent stdin is no longer writable.",
-      );
-      return;
-    }
-
-    try {
-      if (sp.inputProtocol === "claude-stream-json") {
-        const inputMsg = JSON.stringify({
-          type: "user",
-          message: { role: "user", content: response },
-          session_id: sp.claudeSessionId ?? "default",
-          parent_tool_use_id: null,
-        });
-        sp.proc.stdin.write(inputMsg + "\n");
-        return;
-      }
-      sp.proc.stdin.write(response + "\n");
-    } catch (err) {
-      this.emitSystemLog(
-        "warning",
-        sp.sessionId,
-        `Failed to write gate response: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
   }
 
   private handleGenericOutputChunk(

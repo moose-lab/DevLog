@@ -117,7 +117,13 @@ export function applyControlPlaneEvent(
   };
 }
 
-export function resolveControlPlaneGate(
+/**
+ * Reads the pending gate without clearing it. Delivery code must peek first
+ * and only clear (resolve) once the response has actually been handed to the
+ * agent process — clearing eagerly loses the human's answer when delivery
+ * fails (CR-4/IM-9).
+ */
+export function peekControlPlaneGate(
   db: Database.Database,
   sessionId: string,
 ): ResolvedControlPlaneGate | null {
@@ -131,19 +137,29 @@ export function resolveControlPlaneGate(
   const gateStatus = parseGateStatus(session.gate_status);
   if (!gateStatus) return null;
 
-  db.prepare("UPDATE sessions SET gate_status = NULL WHERE id = ?").run(sessionId);
-  if (session.task_id) {
-    db.prepare(
-      "UPDATE tasks SET gate_status = NULL, updated_at = datetime('now') WHERE id = ?",
-    ).run(session.task_id);
-  }
-
   return {
     sessionId,
     taskId: session.task_id,
     currentStage: session.current_stage,
     gateStatus,
   };
+}
+
+export function resolveControlPlaneGate(
+  db: Database.Database,
+  sessionId: string,
+): ResolvedControlPlaneGate | null {
+  const peeked = peekControlPlaneGate(db, sessionId);
+  if (!peeked) return null;
+
+  db.prepare("UPDATE sessions SET gate_status = NULL WHERE id = ?").run(sessionId);
+  if (peeked.taskId) {
+    db.prepare(
+      "UPDATE tasks SET gate_status = NULL, updated_at = datetime('now') WHERE id = ?",
+    ).run(peeked.taskId);
+  }
+
+  return peeked;
 }
 
 function parseProtocolMarker(

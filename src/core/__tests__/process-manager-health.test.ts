@@ -7,6 +7,7 @@ import {
   MAX_WATCHDOG_RESTARTS,
   SESSION_UNRESPONSIVE_MS,
   buildClaudeProcessArgs,
+  canDeliverGateResponse,
   buildLocalCliProcessLaunch,
   needsBrowserApiKeyForWatchdogRestart,
   parseClaudeBinaryPath,
@@ -97,6 +98,27 @@ test("idle persistent sessions are never watchdog-restarted (CR-3)", () => {
 
 test("watchdog restart budget is bounded (CR-3)", () => {
   assert.equal(MAX_WATCHDOG_RESTARTS >= 1 && MAX_WATCHDOG_RESTARTS <= 3, true);
+});
+
+test("gate responses are only deliverable while agent stdin is open (CR-4)", () => {
+  const withStdin = (stdin: { destroyed: boolean; writableEnded: boolean } | null) => ({
+    proc: { stdin },
+  });
+
+  assert.equal(
+    canDeliverGateResponse(withStdin({ destroyed: false, writableEnded: false })),
+    true,
+  );
+  // Plain-stdin runners: stdin.end() was called on the original send.
+  assert.equal(
+    canDeliverGateResponse(withStdin({ destroyed: false, writableEnded: true })),
+    false,
+  );
+  assert.equal(
+    canDeliverGateResponse(withStdin({ destroyed: true, writableEnded: false })),
+    false,
+  );
+  assert.equal(canDeliverGateResponse(withStdin(null)), false);
 });
 
 test("parseClaudeBinaryPath ignores shell alias descriptions", () => {
