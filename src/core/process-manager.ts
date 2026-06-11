@@ -168,19 +168,30 @@ interface SessionProcess {
 
 export const WATCHDOG_INTERVAL_MS = 30000;
 export const SESSION_UNRESPONSIVE_MS = 3 * 60 * 1000;
+/** Watchdog restarts per session before the turn is failed instead (CR-3). */
+export const MAX_WATCHDOG_RESTARTS = 2;
 
 export function shouldRestartUnresponsiveSession({
   lastActivityAt,
   now,
   killed,
   paused = false,
+  isProcessing = true,
 }: {
   lastActivityAt: number;
   now: number;
   killed: boolean;
   paused?: boolean;
+  isProcessing?: boolean;
 }): boolean {
-  return now - lastActivityAt > SESSION_UNRESPONSIVE_MS && !killed && !paused;
+  // An idle persistent session has nothing to restart — only stall detection
+  // during an in-flight turn is meaningful (CR-3 churned idle sessions).
+  return (
+    isProcessing &&
+    now - lastActivityAt > SESSION_UNRESPONSIVE_MS &&
+    !killed &&
+    !paused
+  );
 }
 
 export function needsBrowserApiKeyForWatchdogRestart(
@@ -529,6 +540,7 @@ class ProcessManager {
   private sessions = new Map<string, SessionProcess>();
   private messageQueues = new Map<string, QueuedMessage[]>();
   private providerProcessing = new Set<string>();
+  private watchdogRestarts = new Map<string, number>();
 
   constructor() {
     const watchdog = setInterval(
@@ -563,8 +575,36 @@ class ProcessManager {
           now,
           killed: sp.proc.killed,
           paused: sp.paused,
+          isProcessing: sp.isProcessing,
         })
       ) {
+        continue;
+      }
+
+      const restarts = (this.watchdogRestarts.get(sessionId) ?? 0) + 1;
+      this.watchdogRestarts.set(sessionId, restarts);
+      if (restarts > MAX_WATCHDOG_RESTARTS) {
+        const message = `Session ${sessionId.slice(0, 8)} stayed unresponsive after ${MAX_WATCHDOG_RESTARTS} watchdog restarts. Failing the turn instead of re-executing it again.`;
+        this.emitSystemLog("warning", sessionId, message, "[WATCHDOG]");
+
+        try {
+          sp.proc.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+        this.sessions.delete(sessionId);
+        this.messageQueues.delete(sessionId);
+        this.watchdogRestarts.delete(sessionId);
+
+        try {
+          const db = getDb();
+          markSessionFailedAndReleaseLinkedTask(db, sessionId, message);
+        } catch {
+          // ignore
+        }
+
+        streamManager.emit(sessionId, { type: "error", message });
+        streamManager.emit(sessionId, { type: "status", status: "failed" });
         continue;
       }
 
@@ -866,6 +906,7 @@ class ProcessManager {
     // Capture stderr for debugging
     if (proc.stderr) {
       proc.stderr.on("data", (chunk: Buffer) => {
+        sp.lastActivityAt = Date.now();
         const text = chunk.toString().trim();
         if (text) {
           // Log stderr but don't surface as errors unless critical
@@ -1086,8 +1127,11 @@ class ProcessManager {
       content: message,
     });
 
-    // Mark as processing
+    // Mark as processing. The activity clock starts at send time — without
+    // this, a turn whose first stdout takes >3m is killed by the watchdog
+    // and silently re-executed (CR-3).
     sp.isProcessing = true;
+    sp.lastActivityAt = Date.now();
     sp.textBuffer = "";
     sp.toolCalls = [];
 
@@ -1896,8 +1940,9 @@ class ProcessManager {
         session_id: claudeSessionId,
       });
 
-      // Reset turn state
+      // Reset turn state; a completed turn restores the watchdog budget
       sp.isProcessing = false;
+      this.watchdogRestarts.delete(sessionId);
       sp.textBuffer = "";
       sp.toolCalls = [];
 

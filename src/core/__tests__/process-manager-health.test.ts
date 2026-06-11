@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  MAX_WATCHDOG_RESTARTS,
   SESSION_UNRESPONSIVE_MS,
   buildClaudeProcessArgs,
   buildLocalCliProcessLaunch,
@@ -66,6 +67,36 @@ test("shouldRestartUnresponsiveSession only restarts live stale processes", () =
     }),
     false,
   );
+});
+
+test("idle persistent sessions are never watchdog-restarted (CR-3)", () => {
+  const now = Date.parse("2026-05-22T12:00:00.000Z");
+
+  // Stale but not processing: a persistent session waiting for the next
+  // user message must not be churned every interval.
+  assert.equal(
+    shouldRestartUnresponsiveSession({
+      lastActivityAt: now - SESSION_UNRESPONSIVE_MS - 1,
+      now,
+      killed: false,
+      isProcessing: false,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldRestartUnresponsiveSession({
+      lastActivityAt: now - SESSION_UNRESPONSIVE_MS - 1,
+      now,
+      killed: false,
+      isProcessing: true,
+    }),
+    true,
+  );
+});
+
+test("watchdog restart budget is bounded (CR-3)", () => {
+  assert.equal(MAX_WATCHDOG_RESTARTS >= 1 && MAX_WATCHDOG_RESTARTS <= 3, true);
 });
 
 test("parseClaudeBinaryPath ignores shell alias descriptions", () => {
