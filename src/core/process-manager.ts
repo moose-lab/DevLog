@@ -35,6 +35,7 @@ import {
   LOCAL_CLI_AGENT_DEFINITIONS,
 } from "./local-cli-agent-definitions";
 import { resolveExecutableOnPath } from "./local-cli-agents";
+import { isValidClaudeSessionId } from "./vcc";
 
 export function parseClaudeBinaryPath(output: string): string | null {
   for (const rawLine of output.split("\n")) {
@@ -1755,8 +1756,12 @@ class ProcessManager {
 
     // System events — capture session_id
     if (type === "system") {
-      if (subtype === "init" && event.session_id) {
-        sp.claudeSessionId = event.session_id as string;
+      if (
+        subtype === "init" &&
+        typeof event.session_id === "string" &&
+        isValidClaudeSessionId(event.session_id)
+      ) {
+        sp.claudeSessionId = event.session_id;
         const db = getDb();
         try {
           db.prepare(
@@ -1859,7 +1864,7 @@ class ProcessManager {
     if (type === "result") {
       const isError = event.is_error === true;
       const claudeSessionId = event.session_id as string | undefined;
-      if (claudeSessionId) {
+      if (claudeSessionId && isValidClaudeSessionId(claudeSessionId)) {
         sp.claudeSessionId = claudeSessionId;
         const db = getDb();
         try {
