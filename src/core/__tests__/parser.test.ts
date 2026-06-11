@@ -18,6 +18,36 @@ function makeJsonl(lines: unknown[]): { path: string; cleanup: () => void } {
   return { path, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
+test("sessions without timestamps report epoch so callers can fall back (IM-4)", async () => {
+  const { path, cleanup } = makeJsonl([
+    { type: "assistant", content: "no timestamp here" },
+  ]);
+  try {
+    const meta = await scanSession(path);
+    // firstActivity was initialized to new Date() (scan time), so the
+    // birthtime fallback in discovery (getTime() > 0) never ran and the
+    // session's creation date changed on every scan.
+    assert.equal(meta.firstActivity.getTime(), 0);
+    assert.equal(meta.lastActivity.getTime(), 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("firstActivity tracks the earliest timestamp seen", async () => {
+  const { path, cleanup } = makeJsonl([
+    { type: "assistant", content: "b", timestamp: "2026-06-02T10:00:00.000Z" },
+    { type: "user", content: "a", timestamp: "2026-06-01T09:00:00.000Z" },
+  ]);
+  try {
+    const meta = await scanSession(path);
+    assert.equal(meta.firstActivity.toISOString(), "2026-06-01T09:00:00.000Z");
+    assert.equal(meta.lastActivity.toISOString(), "2026-06-02T10:00:00.000Z");
+  } finally {
+    cleanup();
+  }
+});
+
 test("legacy string-content messages produce events for both roles (IM-2)", async () => {
   const { path, cleanup } = makeJsonl([
     // Legacy format: top-level string content

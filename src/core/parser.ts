@@ -67,7 +67,11 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
     models: [],
     firstUserMessage: "",
     lastActivity: new Date(0),
-    firstActivity: new Date(),
+    // Max-date sentinel for min-tracking; normalized to epoch after the scan
+    // so discovery's `getTime() > 0` birthtime fallback can fire (IM-4 — a
+    // `new Date()` init made it always truthy and creation dates drifted to
+    // scan time).
+    firstActivity: new Date(8640000000000000),
     errorCount: 0,
     costByModel: {},
   };
@@ -178,6 +182,10 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
   meta.uniqueTools = [...toolSet];
   meta.filesReferenced = [...fileSet];
   meta.models = [...modelSet];
+
+  if (meta.firstActivity.getTime() === 8640000000000000) {
+    meta.firstActivity = new Date(0);
+  }
 
   return meta;
 }
