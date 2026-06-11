@@ -7,9 +7,12 @@ import type {
   TextBlock,
   ToolUseBlock,
   ToolResultBlock,
+  SessionDailyUsage,
   SessionMeta,
+  TokenUsage,
 } from "./types";
 import { computeCost } from "./pricing";
+import { getTodayDateKey } from "./report-dates";
 
 // Types to skip entirely
 const SKIP_TYPES = new Set([
@@ -81,6 +84,40 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
   const modelSet = new Set<string>();
   const costedMessageIds = new Set<string>();
 
+  // Per-(local day, model) cost/token buckets (IM-24) — bounded by days ×
+  // models, so safe to keep on the meta even for long sessions.
+  const dailyUsage = new Map<string, SessionDailyUsage>();
+  const addDailyUsage = (
+    ts: Date | null,
+    model: string,
+    cost: number,
+    usage?: TokenUsage,
+  ) => {
+    const when =
+      ts ?? (meta.lastActivity.getTime() > 0 ? meta.lastActivity : new Date(0));
+    const date = getTodayDateKey(when);
+    const key = `${date}\0${model}`;
+    const bucket = dailyUsage.get(key) ?? {
+      date,
+      model,
+      costUSD: 0,
+      lastTimestamp: when.toISOString(),
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+    };
+    bucket.costUSD += cost;
+    const iso = when.toISOString();
+    if (iso > bucket.lastTimestamp) bucket.lastTimestamp = iso;
+    if (usage) {
+      bucket.inputTokens +=
+        (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+      bucket.cachedInputTokens += usage.cache_read_input_tokens ?? 0;
+      bucket.outputTokens += usage.output_tokens ?? 0;
+    }
+    dailyUsage.set(key, bucket);
+  };
+
   const rl = createInterface({
     input: createReadStream(filePath, { encoding: "utf-8" }),
     crlfDelay: Infinity,
@@ -131,11 +168,13 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
         const cost = computeCost(model, usage);
         meta.totalCostUSD += cost;
         meta.costByModel[model] = (meta.costByModel[model] || 0) + cost;
+        addDailyUsage(ts, model, cost, usage);
       } else if (event.costUSD && typeof event.costUSD === "number") {
         // Legacy fallback
         meta.totalCostUSD += event.costUSD;
         const m = model || "unknown";
         meta.costByModel[m] = (meta.costByModel[m] || 0) + event.costUSD;
+        addDailyUsage(ts, m, event.costUSD);
       }
 
       // Duration: one generic read covers turn_duration system events too —
@@ -186,6 +225,10 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
   if (meta.firstActivity.getTime() === 8640000000000000) {
     meta.firstActivity = new Date(0);
   }
+
+  meta.dailyUsage = [...dailyUsage.values()].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.model.localeCompare(b.model),
+  );
 
   return meta;
 }

@@ -176,7 +176,7 @@ export async function buildCostReport(options: {
   const claudeProjects = await discoverProjects(claudeProjectsDir);
   for (const project of claudeProjects) {
     for (const session of project.sessions) {
-      records.push(claudeSessionToRecord(session));
+      records.push(...claudeSessionToRecords(session));
     }
   }
 
@@ -341,6 +341,37 @@ async function listCodexSessionFiles(root: string, includeArchived: boolean): Pr
   await walk(root);
   if (includeArchived) await walk(getCodexArchivedSessionsDir());
   return out;
+}
+
+/**
+ * One usage record per (local day, model) bucket, so spend is attributed to
+ * the day each message actually ran (IM-24). Sessions scanned by older code
+ * (no dailyUsage) fall back to the legacy whole-session record.
+ */
+export function claudeSessionToRecords(session: Session): UsageRecord[] {
+  const daily = session.meta.dailyUsage;
+  if (!daily || daily.length === 0) {
+    return [claudeSessionToRecord(session)];
+  }
+  return daily.map((bucket) => ({
+    provider: "claude_code" as const,
+    billingMode: "api" as const,
+    timestamp: new Date(bucket.lastTimestamp),
+    sessionId: session.id,
+    projectName: session.projectName,
+    projectPath: session.projectPath,
+    model: bucket.model,
+    tokens: {
+      inputTokens: bucket.inputTokens,
+      cachedInputTokens: bucket.cachedInputTokens,
+      outputTokens: bucket.outputTokens,
+      reasoningOutputTokens: 0,
+      totalTokens:
+        bucket.inputTokens + bucket.cachedInputTokens + bucket.outputTokens,
+    },
+    apiCostUSD: bucket.costUSD,
+    subscriptionCredits: 0,
+  }));
 }
 
 function claudeSessionToRecord(session: Session): UsageRecord {
