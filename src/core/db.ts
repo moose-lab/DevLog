@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
-import { SCHEMA } from "./db-schema";
+import { SCHEMA, sessionsTableDdl, tasksTableDdl } from "./db-schema";
 import {
   DEFAULT_AGENT_TEAM_ID,
   DEFAULT_CODING_AGENT_ID,
@@ -46,53 +46,9 @@ export function getDb(): Database.Database {
     // Column already exists
   }
 
-  // Migrate: update CHECK constraint to include 'idle' status
-  // SQLite can't alter CHECK constraints, so recreate the table if needed
-  try {
-    _db.exec("UPDATE sessions SET status = 'idle' WHERE status = 'idle'");
-  } catch {
-    // CHECK constraint fails — need to recreate table
-    _db.exec(`
-      CREATE TABLE IF NOT EXISTS sessions_new (
-        id TEXT PRIMARY KEY,
-        task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
-        worktree_name TEXT, worktree_path TEXT, branch_name TEXT,
-        pid INTEGER,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','running','idle','paused','completed','failed','killed')),
-        claude_command TEXT, claude_session_id TEXT,
-        coding_agent_id TEXT NOT NULL DEFAULT '${DEFAULT_CODING_AGENT_ID}',
-        agent_team_id TEXT NOT NULL DEFAULT '${DEFAULT_AGENT_TEAM_ID}',
-        session_auth_mode TEXT NOT NULL DEFAULT '${DEFAULT_SESSION_AUTH_MODE}',
-        agent_api_key_env_var TEXT,
-        local_cli_agent_id TEXT NOT NULL DEFAULT '${DEFAULT_LOCAL_CLI_AGENT_ID}',
-        agent_model TEXT NOT NULL DEFAULT '${DEFAULT_AGENT_MODEL}',
-        agent_reasoning TEXT NOT NULL DEFAULT '${DEFAULT_LOCAL_CLI_REASONING}',
-        agent_api_protocol TEXT NOT NULL DEFAULT '${DEFAULT_API_PROTOCOL}',
-        agent_api_version TEXT NOT NULL DEFAULT '',
-        agent_base_url TEXT NOT NULL DEFAULT '${DEFAULT_API_BASE_URL}',
-        agent_max_tokens INTEGER NOT NULL DEFAULT ${DEFAULT_API_MAX_TOKENS},
-        current_stage TEXT,
-        gate_status TEXT,
-        prompt TEXT,
-        exit_code INTEGER, log_path TEXT,
-        started_at TEXT NOT NULL DEFAULT (datetime('now')),
-        ended_at TEXT
-      );
-      INSERT OR IGNORE INTO sessions_new (
-        id, task_id, worktree_name, worktree_path, branch_name, pid, status,
-        claude_command, claude_session_id, prompt, exit_code, log_path,
-        started_at, ended_at
-      )
-      SELECT id, task_id, worktree_name, worktree_path, branch_name, pid, status,
-        claude_command, claude_session_id, prompt, exit_code, log_path,
-        started_at, ended_at
-      FROM sessions;
-      DROP TABLE sessions;
-      ALTER TABLE sessions_new RENAME TO sessions;
-      CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
-      CREATE INDEX IF NOT EXISTS idx_sessions_task ON sessions(task_id);
-    `);
-  }
+  // Migrate: widen the sessions status CHECK ('idle'/'paused') when a legacy
+  // table is detected. SQLite can't alter CHECK constraints, so this rebuilds.
+  migrateSessionsStatusCheck(_db);
 
   // Migrate: add project_id columns if missing
   for (const table of ["tasks", "sessions", "file_locks"]) {
@@ -178,38 +134,6 @@ export function getDb(): Database.Database {
   }
   migrateControlPlaneColumns(_db);
 
-  // Migrate: update tasks CHECK constraint to include 'review' and 'blocked'
-  try {
-    _db.exec("UPDATE tasks SET status = 'review' WHERE status = 'review'");
-  } catch {
-    // CHECK constraint fails — recreate table with expanded constraint
-    _db.exec(`
-      CREATE TABLE IF NOT EXISTS tasks_new (
-        id TEXT PRIMARY KEY DEFAULT (hex(randomblob(8))),
-        project_id TEXT NOT NULL DEFAULT 'videoclaw',
-        title TEXT NOT NULL,
-        description TEXT,
-        status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo', 'in_progress', 'review', 'blocked', 'done')),
-        priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('low', 'medium', 'high', 'critical')),
-        worktree_name TEXT,
-        session_id TEXT,
-        sort_order INTEGER NOT NULL DEFAULT 0,
-        prompt TEXT,
-        current_stage TEXT,
-        gate_status TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-        completed_at TEXT
-      );
-      INSERT OR IGNORE INTO tasks_new SELECT * FROM tasks;
-      DROP TABLE tasks;
-      ALTER TABLE tasks_new RENAME TO tasks;
-      CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-      CREATE INDEX IF NOT EXISTS idx_tasks_sort ON tasks(status, sort_order);
-      CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id, status);
-    `);
-  }
-
   // Recover orphaned sessions on first access
   if (!_recovered) {
     _recovered = true;
@@ -242,36 +166,86 @@ export function migrateTasksV2(db: Database.Database): void {
   // Status CHECK widening: SQLite cannot ALTER CHECK; recreate the table only if old CHECK is detected.
   const stmt = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'").get() as { sql: string } | undefined;
   if (stmt && (!stmt.sql.includes("'in_queue'") || !stmt.sql.includes("'fail'"))) {
-    db.exec(`
-      CREATE TABLE tasks_new (
-        id TEXT PRIMARY KEY DEFAULT (hex(randomblob(8))),
-        project_id TEXT NOT NULL DEFAULT 'videoclaw',
-        title TEXT NOT NULL,
-        description TEXT,
-        status TEXT NOT NULL DEFAULT 'todo' CHECK(status IN ('todo', 'in_queue', 'in_progress', 'review', 'blocked', 'fail', 'done')),
-        priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('low', 'medium', 'high', 'critical')),
-        worktree_name TEXT,
-        session_id TEXT,
-        sort_order INTEGER NOT NULL DEFAULT 0,
-        prompt TEXT,
-        blocked_by TEXT,
-        sandbox_iterations INTEGER NOT NULL DEFAULT 0,
-        fail_reason TEXT,
-        current_stage TEXT,
-        gate_status TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-        completed_at TEXT
+    rebuildTable(
+      db,
+      "tasks",
+      tasksTableDdl("tasks_new"),
+      `CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+       CREATE INDEX IF NOT EXISTS idx_tasks_sort ON tasks(status, sort_order);
+       CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id, status);`
+    );
+  }
+}
+
+/**
+ * Widens the sessions status CHECK to include 'idle'/'paused' on legacy DBs.
+ * Detection is via sqlite_master SQL inspection — an UPDATE probe can never
+ * trip the old constraint because forbidden values can't already be stored.
+ */
+export function migrateSessionsStatusCheck(db: Database.Database): void {
+  const stmt = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='sessions'")
+    .get() as { sql: string } | undefined;
+  if (!stmt || (stmt.sql.includes("'idle'") && stmt.sql.includes("'paused'"))) {
+    return;
+  }
+  rebuildTable(
+    db,
+    "sessions",
+    sessionsTableDdl("sessions_new"),
+    `CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+     CREATE INDEX IF NOT EXISTS idx_sessions_task ON sessions(task_id);
+     CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id, status);`
+  );
+}
+
+/**
+ * Rebuilds a table following SQLite's documented table-rebuild procedure:
+ * foreign keys OFF for the duration, copy the intersection of old/new columns
+ * (legacy tables may lack newer ones), then verify with foreign_key_check.
+ * With FKs left ON, `DROP TABLE` fires ON DELETE actions in referencing
+ * tables — e.g. nulling every sessions.task_id (CR-1) or cascade-deleting
+ * session logs (CR-2).
+ */
+function rebuildTable(
+  db: Database.Database,
+  table: string,
+  createNewSql: string,
+  postSql = ""
+): void {
+  const fkWasOn = db.pragma("foreign_keys", { simple: true }) === 1;
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.exec(`DROP TABLE IF EXISTS ${table}_new`);
+    db.exec(createNewSql);
+    const columnsOf = (name: string) =>
+      (db.prepare(`PRAGMA table_info(${name})`).all() as Array<{ name: string }>).map(
+        (col) => col.name
       );
-      INSERT INTO tasks_new (id, project_id, title, description, status, priority, worktree_name, session_id, sort_order, prompt, blocked_by, sandbox_iterations, fail_reason, current_stage, gate_status, created_at, updated_at, completed_at)
-      SELECT id, project_id, title, description, status, priority, worktree_name, session_id, sort_order, prompt, blocked_by, sandbox_iterations, fail_reason, current_stage, gate_status, created_at, updated_at, completed_at
-      FROM tasks;
-      DROP TABLE tasks;
-      ALTER TABLE tasks_new RENAME TO tasks;
-      CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-      CREATE INDEX IF NOT EXISTS idx_tasks_sort ON tasks(status, sort_order);
-      CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id, status);
+    const newColumns = new Set(columnsOf(`${table}_new`));
+    const shared = columnsOf(table)
+      .filter((col) => newColumns.has(col))
+      .map((col) => `"${col}"`)
+      .join(", ");
+    db.exec(`
+      BEGIN;
+      INSERT INTO ${table}_new (${shared}) SELECT ${shared} FROM ${table};
+      DROP TABLE ${table};
+      ALTER TABLE ${table}_new RENAME TO ${table};
+      ${postSql}
+      COMMIT;
     `);
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length > 0) {
+      throw new Error(
+        `foreign_key_check reported ${violations.length} violation(s) after rebuilding ${table}`
+      );
+    }
+  } catch (err) {
+    if (db.inTransaction) db.exec("ROLLBACK");
+    throw err;
+  } finally {
+    if (fkWasOn) db.pragma("foreign_keys = ON");
   }
 }
 
