@@ -7,12 +7,8 @@ import { join } from "path";
 import { homedir } from "os";
 import { randomUUID } from "crypto";
 
-const CLAUDE_DIR = join(homedir(), ".claude", "projects");
-
-// Clean previous test data
-try {
-  rmSync(CLAUDE_DIR, { recursive: true, force: true });
-} catch {}
+const REAL_CLAUDE_DIR = join(homedir(), ".claude", "projects");
+const CLAUDE_DIR = process.env.DEVLOG_TEST_DATA_DIR ?? REAL_CLAUDE_DIR;
 
 const projects = [
   {
@@ -343,7 +339,23 @@ function generateSessionJsonl(
 }
 
 function main() {
+  // Writing into the real Claude Code history dir is opt-in only.
+  if (CLAUDE_DIR === REAL_CLAUDE_DIR && !process.argv.includes("--force")) {
+    console.log("Refusing to write test data into your real Claude Code history dir:");
+    console.log(`  ${REAL_CLAUDE_DIR}`);
+    console.log("\nRe-run with --force to write there anyway, or set DEVLOG_TEST_DATA_DIR to a scratch dir.");
+    return;
+  }
+
   console.log("Generating rich test data...\n");
+
+  // Clean previous test data — only the project dirs this script generates,
+  // never the directory itself (it holds the user's real session history).
+  for (const project of projects) {
+    try {
+      rmSync(join(CLAUDE_DIR, project.encoded), { recursive: true, force: true });
+    } catch {}
+  }
 
   for (const project of projects) {
     const projectDir = join(CLAUDE_DIR, project.encoded);

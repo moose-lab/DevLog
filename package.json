@@ -9,7 +9,10 @@
   },
   "files": [
     "dist",
-    "scripts"
+    "scripts",
+    "!scripts/generate-test-data.ts",
+    "!scripts/task-launch-e2e.mjs",
+    "!scripts/task-launch-e2e-config.mjs"
   ],
   "scripts": {
     "prepare": "husky",
