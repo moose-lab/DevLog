@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   SESSION_UNRESPONSIVE_MS,
   buildClaudeProcessArgs,
@@ -236,6 +239,35 @@ test("buildLocalCliProcessLaunch builds Codex stdin runner args", () => {
 });
 
 test("buildLocalCliProcessLaunch honors selected CLI binary overrides", () => {
+  const dir = mkdtempSync(join(tmpdir(), "devlog-bin-override-"));
+  const codexBin = join(dir, "codex");
+  try {
+    writeFileSync(codexBin, "#!/bin/sh\n", { mode: 0o755 });
+    const launch = buildLocalCliProcessLaunch(
+      resolveSessionRuntimeAuthConfig({
+        session_auth_mode: "local-cli",
+        local_cli_agent_id: "codex",
+        local_cli_agent_env: {
+          CODEX_BIN: codexBin,
+        },
+      }),
+      null,
+      ["Read"],
+      "/repo",
+      () => null,
+    );
+
+    assert.equal(launch.ok, true);
+    if (!launch.ok) return;
+    assert.equal(launch.command, codexBin);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildLocalCliProcessLaunch ignores overrides pointing at foreign binaries (CR-7)", () => {
+  // process.execPath exists but is the node binary, not the agent CLI —
+  // exactly the arbitrary-binary gadget from the review.
   const launch = buildLocalCliProcessLaunch(
     resolveSessionRuntimeAuthConfig({
       session_auth_mode: "local-cli",
@@ -250,9 +282,9 @@ test("buildLocalCliProcessLaunch honors selected CLI binary overrides", () => {
     () => null,
   );
 
-  assert.equal(launch.ok, true);
-  if (!launch.ok) return;
-  assert.equal(launch.command, process.execPath);
+  assert.equal(launch.ok, false);
+  if (launch.ok) return;
+  assert.match(launch.error, /not installed or not on PATH/i);
 });
 
 test("buildLocalCliProcessLaunch rejects missing CLI binary overrides", () => {
@@ -295,23 +327,30 @@ test("validateSessionRuntimeProcessLaunch rejects missing CLI binary overrides b
 });
 
 test("buildLocalCliProcessLaunch honors Claude binary overrides", () => {
-  const launch = buildLocalCliProcessLaunch(
-    resolveSessionRuntimeAuthConfig({
-      session_auth_mode: "local-cli",
-      local_cli_agent_id: "claude",
-      local_cli_agent_env: {
-        CLAUDE_BIN: process.execPath,
-      },
-    }),
-    null,
-    ["Read"],
-    "/repo",
-    () => null,
-  );
+  const dir = mkdtempSync(join(tmpdir(), "devlog-bin-override-"));
+  const claudeBin = join(dir, "claude");
+  try {
+    writeFileSync(claudeBin, "#!/bin/sh\n", { mode: 0o755 });
+    const launch = buildLocalCliProcessLaunch(
+      resolveSessionRuntimeAuthConfig({
+        session_auth_mode: "local-cli",
+        local_cli_agent_id: "claude",
+        local_cli_agent_env: {
+          CLAUDE_BIN: claudeBin,
+        },
+      }),
+      null,
+      ["Read"],
+      "/repo",
+      () => null,
+    );
 
-  assert.equal(launch.ok, true);
-  if (!launch.ok) return;
-  assert.equal(launch.command, process.execPath);
+    assert.equal(launch.ok, true);
+    if (!launch.ok) return;
+    assert.equal(launch.command, claudeBin);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("buildLocalCliProcessLaunch passes custom model ids to supported runners", () => {

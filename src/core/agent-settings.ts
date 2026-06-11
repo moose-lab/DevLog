@@ -687,6 +687,19 @@ function normalizeLocalCliAgentModels(
   return choices;
 }
 
+/**
+ * A *_BIN override is spawned by DevLog, so it may only point at a file
+ * actually named like the agent's binary (plus an optional extension).
+ * Without this, any request body could launch an arbitrary existing binary
+ * such as /bin/sh (CR-7).
+ */
+function isAllowedBinOverride(agentId: string, value: string): boolean {
+  const bin = LOCAL_CLI_AGENT_DEFINITIONS.find((agent) => agent.id === agentId)?.bin;
+  if (!bin) return false;
+  const basename = value.split(/[\\/]/).pop() ?? "";
+  return basename === bin || basename.startsWith(`${bin}.`);
+}
+
 export function normalizeLocalCliAgentEnv(value: unknown): LocalCliAgentEnv {
   if (!isRecord(value)) {
     return {};
@@ -700,15 +713,23 @@ export function normalizeLocalCliAgentEnv(value: unknown): LocalCliAgentEnv {
     const allowed = LOCAL_CLI_AGENT_ENV_KEYS.get(agentId);
     if (!allowed) continue;
 
+    const binEnvKey = LOCAL_CLI_AGENT_DEFINITIONS.find(
+      (agent) => agent.id === agentId,
+    )?.binEnvKey;
+
     const agentEnv: Record<string, string> = {};
     for (const [envKey, rawValue] of Object.entries(rawEnv)) {
       if (!allowed.has(envKey) || typeof rawValue !== "string") {
         continue;
       }
       const trimmed = rawValue.trim().slice(0, MAX_LOCAL_CLI_ENV_VALUE_LENGTH);
-      if (trimmed) {
-        agentEnv[envKey] = trimmed;
+      if (!trimmed) {
+        continue;
       }
+      if (envKey === binEnvKey && !isAllowedBinOverride(agentId, trimmed)) {
+        continue;
+      }
+      agentEnv[envKey] = trimmed;
     }
     if (Object.keys(agentEnv).length > 0) {
       result[agentId] = agentEnv;
