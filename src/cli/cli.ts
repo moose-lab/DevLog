@@ -12,11 +12,31 @@ import { statuslineCommand } from "./commands/statusline";
 import { setupStatuslineCommand } from "./commands/setup-statusline";
 import { setupTmuxCommand } from "./commands/setup-tmux";
 import { serveCommand } from "./commands/serve";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { initOutput, outputJson } from "./utils/output";
 import { levenshtein } from "./utils/format";
+import { resolvePackageRoot } from "./lib/package-root";
 import type { GlobalOptions } from "../core/types";
 
-const VERSION = "0.4.0";
+// Version comes from package.json — a hardcoded constant drifted two
+// releases behind the published package.
+const VERSION = readPackageVersion();
+
+function readPackageVersion(): string {
+  try {
+    const root = resolvePackageRoot(import.meta.dirname);
+    if (root) {
+      const pkg = JSON.parse(
+        readFileSync(join(root, "package.json"), "utf-8"),
+      ) as { version?: string };
+      if (pkg.version) return pkg.version;
+    }
+  } catch {
+    // fall through
+  }
+  return "0.0.0";
+}
 
 const HELP_TEXT = `
 ${chalk.bold.cyan("  ▌")} ${chalk.bold.white("DevLog")} ${chalk.dim(`v${VERSION}`)}
