@@ -949,7 +949,14 @@ class ProcessManager {
     // Handle process close after stdout/stderr have flushed.
     proc.on("close", (code) => {
       this.flushGenericOutput(sessionId, sp);
-      this.sessions.delete(sessionId);
+
+      // After a kill→respawn, this close belongs to the replaced process;
+      // deleting unconditionally would evict the freshly respawned entry and
+      // leave a live process invisible to kill() and the watchdog (IM-5).
+      const isCurrent = this.sessions.get(sessionId) === sp;
+      if (isCurrent) {
+        this.sessions.delete(sessionId);
+      }
       this.emitSystemLog(
         code === 0 ? "success" : "warning",
         sessionId,
@@ -968,6 +975,12 @@ class ProcessManager {
         }
       }
 
+      // A stale close must not touch the session's live state — the
+      // respawned process owns status, exit_code, and task routing now.
+      if (!isCurrent) {
+        return;
+      }
+
       // If there was a turn in progress, notify about the interruption
       if (sp.isProcessing) {
         streamManager.emit(sessionId, {
@@ -978,13 +991,14 @@ class ProcessManager {
         });
       }
 
-      // Update status to idle (can spawn new process for next message)
+      // Update status to idle (can spawn new process for next message) and
+      // persist the exit code — task routing reads it on session exit (IM-6).
       const newStatus = "idle";
       let statusUpdated = false;
       try {
         const result = db.prepare(
-          "UPDATE sessions SET status = ?, pid = NULL WHERE id = ? AND status NOT IN ('completed', 'failed', 'killed')"
-        ).run(newStatus, sessionId);
+          "UPDATE sessions SET status = ?, pid = NULL, exit_code = ? WHERE id = ? AND status NOT IN ('completed', 'failed', 'killed')"
+        ).run(newStatus, code, sessionId);
         statusUpdated = result.changes > 0;
       } catch {
         // ignore

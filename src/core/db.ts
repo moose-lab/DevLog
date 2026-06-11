@@ -2,6 +2,9 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import { SCHEMA, sessionsTableDdl, tasksTableDdl } from "./db-schema";
+// Circular at module level (task-lifecycle uses getDb), but both sides only
+// touch each other's exports inside function bodies, which ESM resolves.
+import { markSessionFailedAndReleaseLinkedTask } from "./task-lifecycle";
 import {
   DEFAULT_AGENT_TEAM_ID,
   DEFAULT_CODING_AGENT_ID,
@@ -290,9 +293,13 @@ export function recoverOrphanedSessions(db: Database.Database): void {
       if (session.status === "paused" && session.gate_status) {
         continue;
       }
-      db.prepare(
-        "UPDATE sessions SET status = 'failed', ended_at = datetime('now') WHERE id = ?"
-      ).run(session.id);
+      // IM-8: release the linked task too — failing only the session left
+      // tasks 'in_progress' pointing at a dead session, unable to relaunch.
+      markSessionFailedAndReleaseLinkedTask(
+        db,
+        session.id,
+        "Session process was lost (server restart or crash) and could not be recovered."
+      );
     }
   }
 }
