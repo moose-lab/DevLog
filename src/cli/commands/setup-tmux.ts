@@ -5,10 +5,12 @@ import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import chalk from "chalk";
 import { resolvePackageRoot } from "../lib/package-root.js";
+import { loadClaudeSettings, writeClaudeSettingsWithBackup } from "../lib/claude-settings.js";
 
 interface Hook {
-  type: string;
-  command: string;
+  type?: string;
+  command?: string;
+  [key: string]: unknown;
 }
 
 interface ClaudeSettings {
@@ -26,7 +28,7 @@ function makeHookCommand(state: string): string {
 }
 
 function removeExistingDevlogHooks(hooks: Hook[]): Hook[] {
-  return hooks.filter((h) => !h.command.includes(".claude-status"));
+  return hooks.filter((h) => !h.command?.includes(".claude-status"));
 }
 
 function generateTmuxScript(devlogBin: string): string {
@@ -103,14 +105,13 @@ export async function setupTmuxCommand(): Promise<void> {
 
   // ── Step 1: Install Claude Code hooks into ~/.claude/settings.json ──
   const claudeSettingsPath = join(homedir(), ".claude", "settings.json");
-  let settings: ClaudeSettings = {};
-  if (existsSync(claudeSettingsPath)) {
-    try {
-      settings = JSON.parse(readFileSync(claudeSettingsPath, "utf-8"));
-    } catch {
-      settings = {};
-    }
+  const loaded = loadClaudeSettings(claudeSettingsPath);
+  if (!loaded.ok) {
+    console.error(chalk.red(`\n  ${loaded.error}`));
+    console.error(chalk.dim("  Fix or remove the file, then re-run. Nothing was modified.\n"));
+    process.exit(1);
   }
+  const settings = loaded.settings as ClaudeSettings;
 
   // Ensure hooks structure exists
   if (!settings.hooks) {
@@ -130,8 +131,7 @@ export async function setupTmuxCommand(): Promise<void> {
   stop.push({ type: "command", command: makeHookCommand("idle") });
   settings.hooks.Stop = stop;
 
-  mkdirSync(dirname(claudeSettingsPath), { recursive: true });
-  writeFileSync(claudeSettingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+  writeClaudeSettingsWithBackup(claudeSettingsPath, settings);
 
   console.log();
   console.log(chalk.green("  \u2713") + chalk.bold.white(" Claude Code hooks installed"));

@@ -5,6 +5,7 @@ import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import chalk from "chalk";
 import { resolvePackageRoot } from "../lib/package-root.js";
+import { loadClaudeSettings, writeClaudeSettingsWithBackup } from "../lib/claude-settings.js";
 import { ensureInit } from "../../core/config.js";
 import { discoverProjects, computeStats } from "../../core/discovery.js";
 import { updateCacheFromStats } from "../../core/cache.js";
@@ -83,14 +84,13 @@ export async function setupStatuslineCommand(): Promise<void> {
 
   // ── Claude Code: statusLine + hooks ───────────────────
   const claudeSettingsPath = join(homedir(), ".claude", "settings.json");
-  let settings: Record<string, unknown> = {};
-  if (existsSync(claudeSettingsPath)) {
-    try {
-      settings = JSON.parse(readFileSync(claudeSettingsPath, "utf-8"));
-    } catch {
-      settings = {};
-    }
+  const loaded = loadClaudeSettings(claudeSettingsPath);
+  if (!loaded.ok) {
+    console.error(chalk.red(`\n  ${loaded.error}`));
+    console.error(chalk.dim("  Fix or remove the file, then re-run. Nothing was modified.\n"));
+    process.exit(1);
   }
+  const settings = loaded.settings;
 
   settings.statusLine = {
     type: "command",
@@ -106,8 +106,7 @@ export async function setupStatuslineCommand(): Promise<void> {
   }
   settings.hooks = hooks;
 
-  mkdirSync(dirname(claudeSettingsPath), { recursive: true });
-  writeFileSync(claudeSettingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+  writeClaudeSettingsWithBackup(claudeSettingsPath, settings);
 
   console.log();
   console.log(chalk.green("  \u2713") + chalk.bold.white(" Claude Code status line + hooks configured"));

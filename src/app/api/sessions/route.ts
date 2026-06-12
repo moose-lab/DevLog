@@ -14,6 +14,7 @@ import {
 import {
   buildSessionRuntimeAuthInstructions,
   getSessionRuntimeAuthInputFromPayload,
+  getPersistedSessionAuthMode,
   getPersistedSessionBaseUrl,
   resolveSessionRuntimeAuthConfig,
 } from "@/core/session-runtime-auth";
@@ -123,7 +124,7 @@ export async function POST(req: NextRequest) {
       typeof branch_name === "string" ? branch_name : null,
       agentConfig.codingAgent.id,
       agentConfig.agentTeam.id,
-      runtimeAuthConfig.mode,
+      getPersistedSessionAuthMode(runtimeAuthConfig),
       runtimeAuthConfig.agentApiKeyEnvVar,
       runtimeAuthConfig.localCliAgentId,
       runtimeAuthConfig.model,
