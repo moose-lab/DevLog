@@ -5,31 +5,7 @@ import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import chalk from "chalk";
 import { resolvePackageRoot } from "../lib/package-root.js";
-import { loadClaudeSettings, writeClaudeSettingsWithBackup } from "../lib/claude-settings.js";
-
-interface Hook {
-  type?: string;
-  command?: string;
-  [key: string]: unknown;
-}
-
-interface ClaudeSettings {
-  hooks?: {
-    PreToolUse?: Hook[];
-    PostToolUse?: Hook[];
-    Stop?: Hook[];
-    [key: string]: Hook[] | undefined;
-  };
-  [key: string]: unknown;
-}
-
-function makeHookCommand(state: string): string {
-  return `bash -c 'echo "{\\"state\\":\\"${state}\\",\\"ts\\":$(date +%s)}" > ~/.claude-status.tmp && mv ~/.claude-status.tmp ~/.claude-status'`;
-}
-
-function removeExistingDevlogHooks(hooks: Hook[]): Hook[] {
-  return hooks.filter((h) => !h.command?.includes(".claude-status"));
-}
+import { loadClaudeSettings, upsertDevlogStatusHooks, writeClaudeSettingsWithBackup } from "../lib/claude-settings.js";
 
 function generateTmuxScript(devlogBin: string): string {
   return `#!/usr/bin/env bash
@@ -111,25 +87,10 @@ export async function setupTmuxCommand(): Promise<void> {
     console.error(chalk.dim("  Fix or remove the file, then re-run. Nothing was modified.\n"));
     process.exit(1);
   }
-  const settings = loaded.settings as ClaudeSettings;
+  const settings = loaded.settings;
 
-  // Ensure hooks structure exists
-  if (!settings.hooks) {
-    settings.hooks = {};
-  }
-
-  // Remove existing devlog hooks (idempotent), then add new ones
-  const preToolUse = removeExistingDevlogHooks(settings.hooks.PreToolUse ?? []);
-  preToolUse.push({ type: "command", command: makeHookCommand("running") });
-  settings.hooks.PreToolUse = preToolUse;
-
-  const postToolUse = removeExistingDevlogHooks(settings.hooks.PostToolUse ?? []);
-  postToolUse.push({ type: "command", command: makeHookCommand("done") });
-  settings.hooks.PostToolUse = postToolUse;
-
-  const stop = removeExistingDevlogHooks(settings.hooks.Stop ?? []);
-  stop.push({ type: "command", command: makeHookCommand("idle") });
-  settings.hooks.Stop = stop;
+  // Install/refresh devlog status hooks (matcher-wrapped schema, IM-17)
+  upsertDevlogStatusHooks(settings);
 
   writeClaudeSettingsWithBackup(claudeSettingsPath, settings);
 

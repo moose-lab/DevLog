@@ -102,6 +102,17 @@ test("formatActivityTimestampForDisplay omits invalid timestamps", () => {
   assert.equal(formatActivityTimestampForDisplay("not a timestamp"), null);
 });
 
+test("live message ids never collide with persisted replay ids (IM-10)", () => {
+  const live = createReplayChatMessage({
+    type: "message",
+    role: "assistant",
+    content: "no persisted id",
+  });
+  assert.ok(live);
+  // Client-generated ids live in a disjoint range above DB autoincrement ids.
+  assert.ok(live!.id >= 1_000_000_000, String(live!.id));
+});
+
 test("createReplayChatMessage preserves stable persisted message ids", () => {
   assert.deepEqual(
     createReplayChatMessage({

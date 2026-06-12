@@ -119,3 +119,32 @@ test("getProject evicts least-recently-used when maxOpen exceeded", () => {
   regCleanup();
   for (const d of [dir1, dir2, dir3]) removeTempDir(d);
 });
+
+test("evicted connections stay usable during the grace period (IM-26)", async () => {
+  const dir1 = makeTempProjectDir();
+  const dir2 = makeTempProjectDir();
+  const { path: regPath, cleanup: regCleanup } = makeTempRegistryPath();
+  const dirs: Record<string, string> = { p1: dir1, p2: dir2 };
+  const pool = createDbPool({
+    registryPath: regPath,
+    resolveProjectDbPath: (id) => pathJoin(dirs[id], ".devlog", "devlog.db"),
+    maxOpen: 1,
+    evictionGraceMs: 40,
+  });
+
+  const inFlight = pool.getProject("p1");
+  pool.getProject("p2"); // evicts p1
+
+  // A caller still holding the evicted handle keeps working...
+  const row = inFlight.prepare("SELECT 1 AS one").get() as { one: number };
+  assert.equal(row.one, 1);
+
+  // ...until the grace period ends, after which the handle is closed.
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.throws(() => inFlight.prepare("SELECT 1 AS one").get());
+
+  pool.closeAll();
+  regCleanup();
+  removeTempDir(dir1);
+  removeTempDir(dir2);
+});

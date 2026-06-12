@@ -17,6 +17,8 @@ export interface DbPoolOptions {
   registryPath?: string;
   resolveProjectDbPath?: (projectId: string) => string;
   maxOpen?: number;
+  /** How long evicted connections stay open for in-flight callers (IM-26). */
+  evictionGraceMs?: number;
 }
 
 const DEFAULT_REGISTRY_PATH = join(homedir(), ".config", "devlog", "registry.sqlite");
@@ -26,6 +28,25 @@ export function createDbPool(opts: DbPoolOptions = {}): DbPool {
   let registryDb: Database.Database | null = null;
   const projectDbs = new Map<string, Database.Database>();
   const maxOpen = opts.maxOpen ?? 8;
+  const evictionGraceMs = opts.evictionGraceMs ?? 30_000;
+  const pendingClose = new Map<Database.Database, ReturnType<typeof setTimeout>>();
+
+  // LRU eviction used to close the handle immediately — a route that was
+  // still mid-request on that connection then failed with "database
+  // connection is not open". Evicted handles now close after a grace
+  // period long enough for in-flight callers to finish (IM-26).
+  function scheduleClose(db: Database.Database): void {
+    const timer = setTimeout(() => {
+      pendingClose.delete(db);
+      try {
+        db.close();
+      } catch {
+        // already closed
+      }
+    }, evictionGraceMs);
+    timer.unref?.();
+    pendingClose.set(db, timer);
+  }
 
   function openRegistry(): Database.Database {
     mkdirSync(dirname(registryPath), { recursive: true });
@@ -40,7 +61,7 @@ export function createDbPool(opts: DbPoolOptions = {}): DbPool {
     while (projectDbs.size >= maxOpen) {
       const oldestKey = projectDbs.keys().next().value as string;
       const oldestDb = projectDbs.get(oldestKey)!;
-      oldestDb.close();
+      scheduleClose(oldestDb);
       projectDbs.delete(oldestKey);
     }
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -84,6 +105,15 @@ export function createDbPool(opts: DbPoolOptions = {}): DbPool {
       if (registryDb) { registryDb.close(); registryDb = null; }
       for (const db of projectDbs.values()) db.close();
       projectDbs.clear();
+      for (const [db, timer] of pendingClose) {
+        clearTimeout(timer);
+        try {
+          db.close();
+        } catch {
+          // already closed
+        }
+      }
+      pendingClose.clear();
     },
   };
 }

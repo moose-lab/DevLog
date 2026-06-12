@@ -63,7 +63,12 @@ interface StreamEvent {
   remaining?: number;
 }
 
-let _idCounter = 0;
+// Live (client-generated) ids start far above any session_messages
+// autoincrement id — replayed messages keep their persisted ids, and the
+// two namespaces previously collided, producing duplicate React keys and
+// reconciliation bugs (IM-10: messages swapped or not updating).
+const LIVE_ID_BASE = 1_000_000_000;
+let _idCounter = LIVE_ID_BASE;
 function nextId(): number {
   return ++_idCounter;
 }

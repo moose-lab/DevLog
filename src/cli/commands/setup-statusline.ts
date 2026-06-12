@@ -5,19 +5,10 @@ import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import chalk from "chalk";
 import { resolvePackageRoot } from "../lib/package-root.js";
-import { loadClaudeSettings, writeClaudeSettingsWithBackup } from "../lib/claude-settings.js";
+import { loadClaudeSettings, upsertDevlogStatusHooks, writeClaudeSettingsWithBackup } from "../lib/claude-settings.js";
 import { ensureInit } from "../../core/config.js";
 import { discoverProjects, computeStats } from "../../core/discovery.js";
 import { updateCacheFromStats } from "../../core/cache.js";
-
-interface Hook {
-  type: string;
-  command: string;
-}
-
-function makeHookCommand(state: string): string {
-  return `bash -c 'echo "{\\"state\\":\\"${state}\\",\\"ts\\":$(date +%s)}" > ~/.claude-status.tmp && mv ~/.claude-status.tmp ~/.claude-status'`;
-}
 
 function generateTmuxScript(devlogBin: string): string {
   return `#!/usr/bin/env bash
@@ -97,14 +88,8 @@ export async function setupStatuslineCommand(): Promise<void> {
     command: `${devlogBin} statusline`,
   };
 
-  const hooks = ((settings.hooks as Record<string, Hook[]>) ?? {}) as Record<string, Hook[]>;
-  for (const [event, state] of [["PreToolUse", "running"], ["PostToolUse", "done"], ["Stop", "idle"]] as const) {
-    const existing = Array.isArray(hooks[event]) ? hooks[event] : [];
-    const filtered = existing.filter((h) => !h.command?.includes(".claude-status"));
-    filtered.push({ type: "command", command: makeHookCommand(state) });
-    hooks[event] = filtered;
-  }
-  settings.hooks = hooks;
+  // Install/refresh devlog status hooks (matcher-wrapped schema, IM-17)
+  upsertDevlogStatusHooks(settings);
 
   writeClaudeSettingsWithBackup(claudeSettingsPath, settings);
 
