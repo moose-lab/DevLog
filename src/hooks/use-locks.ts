@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
 import type { FileLock } from "@/core/types-dashboard";
+import { usePolledJson } from "./use-polled-json";
 
 interface Conflict {
   file_path: string;
@@ -10,29 +10,13 @@ interface Conflict {
   detected_at: string;
 }
 
+interface LocksPayload {
+  locks: FileLock[];
+  conflicts: Conflict[];
+}
+
 export function useLocks() {
-  const [locks, setLocks] = useState<FileLock[]>([]);
-  const [conflicts, setConflicts] = useState<Conflict[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const fetchLocks = useCallback(async () => {
-    try {
-      const res = await fetch("/api/locks");
-      if (res.ok) {
-        const data = await res.json();
-        setLocks(data.locks);
-        setConflicts(data.conflicts);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchLocks();
-    const interval = setInterval(fetchLocks, 3000);
-    return () => clearInterval(interval);
-  }, [fetchLocks]);
+  const { data, loading, error, refresh } = usePolledJson<LocksPayload>("/api/locks", 3000);
 
   const resolveConflict = async (filePath: string, worktreeName?: string) => {
     await fetch("/api/locks", {
@@ -40,8 +24,15 @@ export function useLocks() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ file_path: filePath, worktree_name: worktreeName }),
     });
-    await fetchLocks();
+    await refresh();
   };
 
-  return { locks, conflicts, loading, resolveConflict, refresh: fetchLocks };
+  return {
+    locks: data?.locks ?? [],
+    conflicts: data?.conflicts ?? [],
+    loading,
+    error,
+    resolveConflict,
+    refresh,
+  };
 }
