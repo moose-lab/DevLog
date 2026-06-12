@@ -1,7 +1,11 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname } from "path";
 
 export type ClaudeSettings = Record<string, unknown>;
+
+function isFileMissing(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException)?.code === "ENOENT";
+}
 
 /**
  * Reads ~/.claude/settings.json without destroying it (IM-18). A parse
@@ -14,11 +18,20 @@ export function loadClaudeSettings(
 ):
   | { ok: true; settings: ClaudeSettings }
   | { ok: false; error: string } {
-  if (!existsSync(path)) {
-    return { ok: true, settings: {} };
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf-8");
+  } catch (err) {
+    if (isFileMissing(err)) {
+      return { ok: true, settings: {} };
+    }
+    return {
+      ok: false,
+      error: `Could not read ${path}: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
+    const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return { ok: true, settings: parsed as ClaudeSettings };
     }
@@ -36,8 +49,11 @@ export function writeClaudeSettingsWithBackup(
   settings: ClaudeSettings,
 ): void {
   mkdirSync(dirname(path), { recursive: true });
-  if (existsSync(path)) {
+  try {
     copyFileSync(path, `${path}.bak`);
+  } catch (err) {
+    // No existing file means nothing to back up.
+    if (!isFileMissing(err)) throw err;
   }
   writeFileSync(path, JSON.stringify(settings, null, 2) + "\n", "utf-8");
 }
