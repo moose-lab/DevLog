@@ -159,7 +159,7 @@ export async function POST(
 
   // 5. Start file watcher
   try {
-    fileWatcher.watchWorktree(worktreeName, worktree.path, sessionId);
+    fileWatcher.watchWorktree(worktreeName, worktree.path, sessionId, projectId);
   } catch {
     // non-fatal
   }

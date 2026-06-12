@@ -1,5 +1,6 @@
 import { watch, type FSWatcher } from "chokidar";
 import path from "path";
+import type Database from "better-sqlite3";
 import { getDb } from "./db";
 import { streamManager } from "./stream-manager";
 
@@ -20,7 +21,12 @@ class FileWatcher {
     this.repoRoot = path.resolve(process.cwd(), "..");
   }
 
-  watchWorktree(worktreeName: string, worktreePath: string, sessionId?: string): void {
+  watchWorktree(
+    worktreeName: string,
+    worktreePath: string,
+    sessionId?: string,
+    projectId?: string,
+  ): void {
     if (this.watchers.has(worktreeName)) return;
 
     const watcher = watch(worktreePath, {
@@ -32,8 +38,27 @@ class FileWatcher {
 
     const handleChange = (filePath: string) => {
       const relativePath = path.relative(worktreePath, filePath);
-      this.upsertLock(relativePath, worktreeName, sessionId ?? null);
-      this.checkConflicts(relativePath, worktreeName);
+      recordWorktreeFileLock(getDb(), {
+        projectId: projectId ?? null,
+        filePath: relativePath,
+        worktreeName,
+        sessionId: sessionId ?? null,
+      });
+      const conflictWorktrees = detectAndMarkConflicts(getDb(), {
+        projectId: projectId ?? null,
+        filePath: relativePath,
+        worktreeName,
+      });
+      if (conflictWorktrees.length > 0) {
+        streamManager.emit("conflicts", {
+          type: "status",
+          status: "conflict",
+          content: JSON.stringify({
+            file_path: relativePath,
+            worktrees: [worktreeName, ...conflictWorktrees],
+          }),
+        });
+      }
     };
 
     watcher.on("change", handleChange);
@@ -50,64 +75,12 @@ class FileWatcher {
     }
   }
 
-  private upsertLock(filePath: string, worktreeName: string, sessionId: string | null): void {
-    const db = getDb();
-
-    const existing = db
-      .prepare(
-        "SELECT id FROM file_locks WHERE file_path = ? AND worktree_name = ? AND resolved_at IS NULL"
-      )
-      .get(filePath, worktreeName);
-
-    if (existing) {
-      db.prepare(
-        "UPDATE file_locks SET detected_at = datetime('now'), session_id = COALESCE(?, session_id) WHERE file_path = ? AND worktree_name = ? AND resolved_at IS NULL"
-      ).run(sessionId, filePath, worktreeName);
-    } else {
-      db.prepare(
-        "INSERT INTO file_locks (file_path, worktree_name, session_id, lock_type) VALUES (?, ?, ?, 'write')"
-      ).run(filePath, worktreeName, sessionId);
-    }
-  }
-
-  private checkConflicts(filePath: string, worktreeName: string): void {
-    const db = getDb();
-
-    const conflicts = db
-      .prepare(
-        `SELECT worktree_name FROM file_locks
-         WHERE file_path = ? AND worktree_name != ? AND resolved_at IS NULL`
-      )
-      .all(filePath, worktreeName) as { worktree_name: string }[];
-
-    if (conflicts.length > 0) {
-      // Mark as conflict
-      db.prepare(
-        "UPDATE file_locks SET lock_type = 'conflict' WHERE file_path = ? AND resolved_at IS NULL"
-      ).run(filePath);
-
-      const conflictWorktrees = [worktreeName, ...conflicts.map((c) => c.worktree_name)];
-
-      // Emit conflict event to all relevant sessions
-      streamManager.emit("conflicts", {
-        type: "status",
-        status: "conflict",
-        content: JSON.stringify({ file_path: filePath, worktrees: conflictWorktrees }),
-      });
-    }
-  }
-
-  resolveConflict(filePath: string, worktreeName?: string): void {
-    const db = getDb();
-    if (worktreeName) {
-      db.prepare(
-        "UPDATE file_locks SET resolved_at = datetime('now') WHERE file_path = ? AND worktree_name = ?"
-      ).run(filePath, worktreeName);
-    } else {
-      db.prepare(
-        "UPDATE file_locks SET resolved_at = datetime('now') WHERE file_path = ?"
-      ).run(filePath);
-    }
+  resolveConflict(filePath: string, worktreeName?: string, projectId?: string): void {
+    resolveFileLock(getDb(), {
+      projectId: projectId ?? null,
+      filePath,
+      worktreeName,
+    });
   }
 
   closeAll(): void {
@@ -118,6 +91,84 @@ class FileWatcher {
 
   getWatchedCount(): number {
     return this.watchers.size;
+  }
+}
+
+interface FileLockScope {
+  /** Null preserves the schema default for legacy callers without a project. */
+  projectId: string | null;
+  filePath: string;
+  worktreeName: string;
+}
+
+/**
+ * Records a write lock for a changed file. Locks are scoped by project —
+ * the previous INSERT omitted project_id, so every row defaulted to
+ * 'videoclaw' and project-scoped conflict queries returned empty for all
+ * other projects (REVIEW-2026-06-10 suggestions; latent IM-level bug).
+ */
+export function recordWorktreeFileLock(
+  db: Database.Database,
+  input: FileLockScope & { sessionId: string | null },
+): void {
+  const existing = db
+    .prepare(
+      "SELECT id FROM file_locks WHERE file_path = ? AND worktree_name = ? AND resolved_at IS NULL"
+    )
+    .get(input.filePath, input.worktreeName);
+
+  if (existing) {
+    db.prepare(
+      "UPDATE file_locks SET detected_at = datetime('now'), session_id = COALESCE(?, session_id) WHERE file_path = ? AND worktree_name = ? AND resolved_at IS NULL"
+    ).run(input.sessionId, input.filePath, input.worktreeName);
+  } else if (input.projectId) {
+    db.prepare(
+      "INSERT INTO file_locks (project_id, file_path, worktree_name, session_id, lock_type) VALUES (?, ?, ?, ?, 'write')"
+    ).run(input.projectId, input.filePath, input.worktreeName, input.sessionId);
+  } else {
+    db.prepare(
+      "INSERT INTO file_locks (file_path, worktree_name, session_id, lock_type) VALUES (?, ?, ?, 'write')"
+    ).run(input.filePath, input.worktreeName, input.sessionId);
+  }
+}
+
+/** Marks same-project locks on the file as conflicting; returns the other worktrees. */
+export function detectAndMarkConflicts(
+  db: Database.Database,
+  input: FileLockScope,
+): string[] {
+  const scope = input.projectId ? " AND project_id = ?" : "";
+  const scopeArgs = input.projectId ? [input.projectId] : [];
+  const conflicts = db
+    .prepare(
+      `SELECT worktree_name FROM file_locks
+       WHERE file_path = ? AND worktree_name != ? AND resolved_at IS NULL${scope}`
+    )
+    .all(input.filePath, input.worktreeName, ...scopeArgs) as { worktree_name: string }[];
+
+  if (conflicts.length === 0) return [];
+
+  db.prepare(
+    `UPDATE file_locks SET lock_type = 'conflict' WHERE file_path = ? AND resolved_at IS NULL${scope}`
+  ).run(input.filePath, ...scopeArgs);
+
+  return conflicts.map((c) => c.worktree_name);
+}
+
+export function resolveFileLock(
+  db: Database.Database,
+  input: { projectId: string | null; filePath: string; worktreeName?: string },
+): void {
+  const scope = input.projectId ? " AND project_id = ?" : "";
+  const scopeArgs = input.projectId ? [input.projectId] : [];
+  if (input.worktreeName) {
+    db.prepare(
+      `UPDATE file_locks SET resolved_at = datetime('now') WHERE file_path = ? AND worktree_name = ?${scope}`
+    ).run(input.filePath, input.worktreeName, ...scopeArgs);
+  } else {
+    db.prepare(
+      `UPDATE file_locks SET resolved_at = datetime('now') WHERE file_path = ?${scope}`
+    ).run(input.filePath, ...scopeArgs);
   }
 }
 

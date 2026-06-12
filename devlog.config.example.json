@@ -1,0 +1,12 @@
+{
+  "projects": [
+    {
+      "id": "my-project",
+      "name": "My Project",
+      "path": "/absolute/path/to/your/repo",
+      "defaultBranch": "main"
+    }
+  ],
+  "activeProject": "my-project",
+  "port": 3333
+}

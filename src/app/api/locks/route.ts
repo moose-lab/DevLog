@@ -35,7 +35,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "file_path is required" }, { status: 400 });
   }
 
-  fileWatcher.resolveConflict(file_path, worktree_name);
+  const projectId = resolveProjectId(req);
+  fileWatcher.resolveConflict(file_path, worktree_name, projectId);
 
   return NextResponse.json({ ok: true });
 }

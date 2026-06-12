@@ -13,3 +13,7 @@ _bmad-output/
 docs/plans/
 docs/superpowers/
 package-lock.json
+
+# machine-specific
+tsconfig.tsbuildinfo
+devlog.config.json

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   Dialog,
@@ -49,6 +49,11 @@ interface LaunchDialogProps {
 }
 
 export function LaunchDialog({ onSubmit }: LaunchDialogProps) {
+  // Stable per-mount example (was re-randomized on every render)
+  const examplePrompt = useMemo(
+    () => EXAMPLE_PROMPTS[Math.floor(Math.random() * EXAMPLE_PROMPTS.length)],
+    [],
+  );
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
@@ -138,7 +143,7 @@ export function LaunchDialog({ onSubmit }: LaunchDialogProps) {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={EXAMPLE_PROMPTS[Math.floor(Math.random() * EXAMPLE_PROMPTS.length)]}
+              placeholder={examplePrompt}
               rows={5}
               autoFocus
               className="resize-none"

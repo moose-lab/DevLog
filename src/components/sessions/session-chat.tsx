@@ -279,6 +279,24 @@ function PermissionPrompt({
   );
 }
 
+// Pair each tool call with the next unconsumed result of the same tool —
+// pairing by array index attached outputs to the wrong calls whenever
+// results arrived out of order or a call produced none.
+function pairToolResults(
+  calls: { name: string; input: Record<string, unknown> }[],
+  results?: { name: string; output: string; is_error?: boolean }[],
+): Array<[
+  { name: string; input: Record<string, unknown> },
+  { name: string; output: string; is_error?: boolean } | undefined,
+]> {
+  const remaining = [...(results ?? [])];
+  return calls.map((call) => {
+    const index = remaining.findIndex((r) => r.name === call.name);
+    if (index === -1) return [call, undefined];
+    return [call, remaining.splice(index, 1)[0]];
+  });
+}
+
 // Cap how much history stays mounted; very long sessions otherwise keep
 // thousands of markdown trees alive (IM-28).
 const MESSAGE_WINDOW = 200;
@@ -317,14 +335,16 @@ const MessageBubble = memo(function MessageBubble({ msg }: { msg: ChatMsg }) {
             {/* Tool calls (shown before the text response) */}
             {msg.toolCalls && msg.toolCalls.length > 0 && (
               <div className="mb-2">
-                {msg.toolCalls.map((tc, i) => (
-                  <ToolCallBlock
-                    key={i}
-                    name={tc.name}
-                    input={tc.input}
-                    result={msg.toolResults?.[i]}
-                  />
-                ))}
+                {pairToolResults(msg.toolCalls, msg.toolResults).map(
+                  ([tc, result], i) => (
+                    <ToolCallBlock
+                      key={i}
+                      name={tc.name}
+                      input={tc.input}
+                      result={result}
+                    />
+                  )
+                )}
               </div>
             )}
             <div className="prose prose-sm prose-invert max-w-none text-sm leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_pre]:bg-background/50 [&_pre]:rounded [&_pre]:p-2.5 [&_pre]:text-xs [&_code]:text-xs [&_code]:bg-background/30 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded">

@@ -141,14 +141,6 @@ export interface ActiveConflict {
   detected_at: string;
 }
 
-export interface ChatMessage {
-  id: number;
-  session_id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: string;
-}
-
 export interface DevLogStats {
   sessions: number;
   totalCost: number;
