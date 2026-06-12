@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { Task, TaskStatus, TaskPriority, Session } from "@/core/types-dashboard";
 import type { SessionRuntimeAuthInput } from "@/core/session-runtime-auth";
 import type { ChatStreamEvent } from "@/core/stream-manager";
@@ -16,7 +17,10 @@ function shouldRefreshTasksForEvent(event: ChatStreamEvent): boolean {
 
 export function useTasks() {
   const { data, loading, error, refresh } = usePolledJson<Task[]>("/api/tasks", 5000);
-  const tasks = data ?? [];
+  // Optimistic overlay for drag-drop (IM-11): applied immediately on
+  // reorder so cards don't snap back while the POST + refetch round-trips.
+  const [optimistic, setOptimistic] = useState<Task[] | null>(null);
+  const tasks = optimistic ?? data ?? [];
   const fetchTasks = refresh;
 
   useGlobalStreamEvent((event) => {
@@ -65,12 +69,27 @@ export function useTasks() {
   const reorder = async (
     items: { id: string; status: TaskStatus; sort_order: number }[]
   ) => {
-    await fetch("/api/tasks/reorder", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items }),
-    });
-    await fetchTasks();
+    const updates = new Map(items.map((item) => [item.id, item]));
+    setOptimistic(
+      (data ?? []).map((task) => {
+        const update = updates.get(task.id);
+        return update
+          ? { ...task, status: update.status, sort_order: update.sort_order }
+          : task;
+      }),
+    );
+    try {
+      await fetch("/api/tasks/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      // refresh bumps the poll store's sequence, so an in-flight poll that
+      // started before the reorder can't resurrect the old order.
+      await fetchTasks();
+    } finally {
+      setOptimistic(null);
+    }
   };
 
   const tasksByStatus = (status: TaskStatus) =>
