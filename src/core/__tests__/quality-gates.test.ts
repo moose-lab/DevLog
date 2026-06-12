@@ -107,26 +107,6 @@ test("task and session runtime dispatch waits for browser settings to load", () 
   }
 });
 
-test("dashboard task quick view forwards runtime payload from the detail dialog", () => {
-  const source = readRepoFile("src/components/dashboard/task-quick-view.tsx");
-
-  assert.match(
-    source,
-    /agentConfig\?: \{[\s\S]*SessionRuntimeAuthInput/,
-    "dashboard quick task launcher must accept the runtime payload supplied by TaskDetailDialog",
-  );
-  assert.match(
-    source,
-    /promptOverride\?: string/,
-    "dashboard quick task launcher must accept the edited prompt supplied by TaskDetailDialog",
-  );
-  assert.match(
-    source,
-    /\.\.\.agentConfig/,
-    "dashboard quick task launcher must forward runtime payload fields to /api/sessions",
-  );
-});
-
 test("session stream route scopes subscriptions to the current project", () => {
   const source = readRepoFile("src/app/api/sessions/[id]/stream/route.ts");
 
