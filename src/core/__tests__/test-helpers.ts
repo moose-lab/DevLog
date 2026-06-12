@@ -79,15 +79,3 @@ export function makeTempProjectDir(opts: { withGit?: boolean; withPackageJson?: 
 export function removeTempDir(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
 }
-
-/**
- * Returns a registry-DB-only path within a temp dir, plus a cleanup function.
- * Used for tests that need the actual file (not :memory:).
- */
-export function makeTempRegistryPath(): { path: string; cleanup: () => void } {
-  const dir = mkdtempSync(join(tmpdir(), "devlog-test-registry-"));
-  return {
-    path: join(dir, "registry.sqlite"),
-    cleanup: () => rmSync(dir, { recursive: true, force: true }),
-  };
-}
