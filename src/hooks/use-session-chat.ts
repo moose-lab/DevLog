@@ -490,19 +490,22 @@ export function useSessionChat(
             break;
 
           // Message queued (sent during active turn)
-          case "message_queued":
+          case "message_queued": {
             setQueuedCount(data.position ?? 0);
+            const queuedContent = data.content;
+            if (!queuedContent) break;
             // Add a queued placeholder message
             setMessages((prev) => [
               ...prev,
               {
                 id: nextId(),
                 role: "user",
-                content: data.content!,
+                content: queuedContent,
                 isQueued: true,
               },
             ]);
             break;
+          }
 
           // Queue drained
           case "queue_drained":
