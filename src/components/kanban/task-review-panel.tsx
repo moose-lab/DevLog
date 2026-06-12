@@ -25,7 +25,7 @@ interface TaskReviewPanelProps {
 
 export function TaskReviewPanel({ task, onUpdate }: TaskReviewPanelProps) {
   const router = useRouter();
-  const [diff, setDiff] = useState<{ stat: string; diff: string } | null>(null);
+  const [diff, setDiff] = useState<{ stat: string; log: string } | null>(null);
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [creatingPr, setCreatingPr] = useState(false);
   const [prUrl, setPrUrl] = useState<string | null>(null);
@@ -46,7 +46,7 @@ export function TaskReviewPanel({ task, onUpdate }: TaskReviewPanelProps) {
       fetch(`/api/worktrees/${task.worktree_name}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => {
-          if (data) setDiff({ stat: data.diff ?? "", diff: data.log ?? "" });
+          if (data) setDiff({ stat: data.diff ?? "", log: data.log ?? "" });
         })
         .finally(() => setLoadingDiff(false));
     }

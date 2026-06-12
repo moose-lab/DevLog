@@ -405,7 +405,7 @@ function extractCodexQuota(rateLimits: any, timestamp: Date): CostQuotaWindow[] 
       source: "local_log",
     });
   }
-  return windows.sort((a, b) => timestamp.getTime() - timestamp.getTime() || a.name.localeCompare(b.name));
+  return windows.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function getProviderSummary(map: Map<CostProvider, CostProviderSummary>, provider: CostProvider): CostProviderSummary {

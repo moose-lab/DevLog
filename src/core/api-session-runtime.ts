@@ -170,13 +170,20 @@ function getStoredSessionStatus(
   return row?.status ?? null;
 }
 
+// Each turn previously resent the session's entire message history to the
+// provider — requests grew without bound on long sessions.
+const PROVIDER_HISTORY_LIMIT = 40;
+
 function getProviderChatHistory(
   db: Database.Database,
   sessionId: string,
 ): ProviderChatMessage[] {
   return db
     .prepare(
-      "SELECT role, content FROM session_messages WHERE session_id = ? ORDER BY id ASC",
+      `SELECT role, content FROM (
+         SELECT id, role, content FROM session_messages
+         WHERE session_id = ? ORDER BY id DESC LIMIT ${PROVIDER_HISTORY_LIMIT}
+       ) ORDER BY id ASC`,
     )
     .all(sessionId)
     .map((row) => {
