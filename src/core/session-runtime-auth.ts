@@ -418,6 +418,19 @@ export function getPersistedSessionBaseUrl(
   return config.baseUrl ?? DEFAULT_BASE_URL_BY_PROTOCOL[config.apiProtocol];
 }
 
+/**
+ * The session_auth_mode value to persist (IM-7). Legacy env-var sessions
+ * resolve to mode "anthropic-api-key" with usesLegacyEnvVar set — storing
+ * the bare mode loses that marker, and the next stored-config resolution
+ * treats the session as browser BYOK and fails with "API key is required"
+ * even though preflight passed.
+ */
+export function getPersistedSessionAuthMode(
+  config: SessionRuntimeAuthConfig,
+): string {
+  return config.usesLegacyEnvVar ? "agent-api-key" : config.mode;
+}
+
 export function buildClaudeProcessEnv(
   baseEnv: NodeJS.ProcessEnv,
   config: SessionRuntimeAuthConfig,
