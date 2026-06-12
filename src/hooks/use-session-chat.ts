@@ -473,11 +473,15 @@ export function useSessionChat(
 
           // Permission request from Claude
           case "permission_request":
-            setPendingPermission({
-              requestId: data.request_id!,
-              toolName: data.tool_name!,
-              toolInput: data.tool_input ?? {},
-            });
+            // Stream fields are optional — a malformed event must not seed
+            // a permission prompt with undefined id/tool.
+            if (data.request_id && data.tool_name) {
+              setPendingPermission({
+                requestId: data.request_id,
+                toolName: data.tool_name,
+                toolInput: data.tool_input ?? {},
+              });
+            }
             break;
 
           // Permission resolved
