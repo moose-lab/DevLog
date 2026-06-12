@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
 import type { Session } from "@/core/types-dashboard";
 import type { SessionRuntimeAuthInput } from "@/core/session-runtime-auth";
 import type { ChatStreamEvent } from "@/core/stream-manager";
+import { usePolledJson } from "./use-polled-json";
+import { useGlobalStreamEvent } from "./use-global-stream";
 
 function shouldRefreshSessionsForEvent(event: ChatStreamEvent): boolean {
   return (
@@ -14,44 +15,15 @@ function shouldRefreshSessionsForEvent(event: ChatStreamEvent): boolean {
 }
 
 export function useSessions() {
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data, loading, error, refresh } = usePolledJson<Session[]>("/api/sessions", 5000);
+  const sessions = data ?? [];
+  const fetchSessions = refresh;
 
-  const fetchSessions = useCallback(async () => {
-    try {
-      const res = await fetch("/api/sessions");
-      if (res.ok) {
-        setSessions(await res.json());
-      }
-    } finally {
-      setLoading(false);
+  useGlobalStreamEvent((event) => {
+    if (shouldRefreshSessionsForEvent(event)) {
+      void fetchSessions();
     }
-  }, []);
-
-  useEffect(() => {
-    fetchSessions();
-    const interval = setInterval(fetchSessions, 5000);
-    return () => clearInterval(interval);
-  }, [fetchSessions]);
-
-  useEffect(() => {
-    const source = new EventSource("/api/devlog/stream");
-    source.onmessage = (message) => {
-      let event: ChatStreamEvent;
-      try {
-        event = JSON.parse(message.data) as ChatStreamEvent;
-      } catch {
-        return;
-      }
-      if (shouldRefreshSessionsForEvent(event)) {
-        fetchSessions();
-      }
-    };
-
-    return () => {
-      source.close();
-    };
-  }, [fetchSessions]);
+  });
 
   const launchSession = async (data: {
     task_id?: string;
@@ -89,5 +61,5 @@ export function useSessions() {
     await fetchSessions();
   };
 
-  return { sessions, loading, launchSession, controlSession, deleteSession, refresh: fetchSessions };
+  return { sessions, loading, error, launchSession, controlSession, deleteSession, refresh: fetchSessions };
 }

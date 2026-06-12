@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/core/dashboard-utils";
 import type { RecentActivity } from "@/hooks/use-task-analytics";
 import type { Session, Task } from "@/core/types-dashboard";
 import type { ChatStreamEvent, SystemLogLevel } from "@/core/stream-manager";
+import { useGlobalStreamEvent } from "@/hooks/use-global-stream";
 
 interface StreamEntry {
   type: "system" | "success" | "warning" | "error";
@@ -70,32 +71,17 @@ export function CommandStream({
 }: CommandStreamProps) {
   const [entries, setEntries] = useState<StreamEntry[]>([]);
 
-  useEffect(() => {
-    const source = new EventSource("/api/devlog/stream");
-
-    source.onmessage = (message) => {
-      let event: ChatStreamEvent;
-      try {
-        event = JSON.parse(message.data) as ChatStreamEvent;
-      } catch {
-        return;
-      }
-
-      if (event.type !== "system_log") return;
-      const entry: StreamEntry = {
-        type: mapSystemLevelToEntryType(event.level),
-        prefix: event.prefix ?? formatSystemPrefix(event.level),
-        text: event.message,
-        time: event.timestamp,
-      };
-
-      setEntries((current) => [entry, ...current].slice(0, 20));
+  useGlobalStreamEvent((event: ChatStreamEvent) => {
+    if (event.type !== "system_log") return;
+    const entry: StreamEntry = {
+      type: mapSystemLevelToEntryType(event.level),
+      prefix: event.prefix ?? formatSystemPrefix(event.level),
+      text: event.message,
+      time: event.timestamp,
     };
 
-    return () => {
-      source.close();
-    };
-  }, []);
+    setEntries((current) => [entry, ...current].slice(0, 20));
+  });
 
   return (
     <div

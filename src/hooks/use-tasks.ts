@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
 import type { Task, TaskStatus, TaskPriority, Session } from "@/core/types-dashboard";
 import type { SessionRuntimeAuthInput } from "@/core/session-runtime-auth";
 import type { ChatStreamEvent } from "@/core/stream-manager";
+import { usePolledJson } from "./use-polled-json";
+import { useGlobalStreamEvent } from "./use-global-stream";
 
 function shouldRefreshTasksForEvent(event: ChatStreamEvent): boolean {
   return (
@@ -14,44 +15,15 @@ function shouldRefreshTasksForEvent(event: ChatStreamEvent): boolean {
 }
 
 export function useTasks() {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data, loading, error, refresh } = usePolledJson<Task[]>("/api/tasks", 5000);
+  const tasks = data ?? [];
+  const fetchTasks = refresh;
 
-  const fetchTasks = useCallback(async () => {
-    try {
-      const res = await fetch("/api/tasks");
-      if (res.ok) {
-        setTasks(await res.json());
-      }
-    } finally {
-      setLoading(false);
+  useGlobalStreamEvent((event) => {
+    if (shouldRefreshTasksForEvent(event)) {
+      void fetchTasks();
     }
-  }, []);
-
-  useEffect(() => {
-    fetchTasks();
-    const interval = setInterval(fetchTasks, 5000);
-    return () => clearInterval(interval);
-  }, [fetchTasks]);
-
-  useEffect(() => {
-    const source = new EventSource("/api/devlog/stream");
-    source.onmessage = (message) => {
-      let event: ChatStreamEvent;
-      try {
-        event = JSON.parse(message.data) as ChatStreamEvent;
-      } catch {
-        return;
-      }
-      if (shouldRefreshTasksForEvent(event)) {
-        fetchTasks();
-      }
-    };
-
-    return () => {
-      source.close();
-    };
-  }, [fetchTasks]);
+  });
 
   const createTask = async (data: {
     title: string;
@@ -126,6 +98,7 @@ export function useTasks() {
   return {
     tasks,
     loading,
+    error,
     createTask,
     updateTask,
     deleteTask,

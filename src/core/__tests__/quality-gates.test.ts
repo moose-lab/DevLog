@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { test } from "node:test";
 
 const repoRoot = new URL("../../../", import.meta.url);
@@ -232,8 +232,8 @@ test("task and session lists refresh on control-plane stream events", () => {
   ] as const) {
     assert.match(
       source,
-      /new EventSource\("\/api\/devlog\/stream"\)/,
-      `${name} should subscribe to the global DevLog stream`,
+      /useGlobalStreamEvent\(/,
+      `${name} should subscribe via the shared global stream (IM-27)`,
     );
     assert.match(
       source,
@@ -258,4 +258,24 @@ test("the default CLI command declares the optional session ref (IM-15)", () => 
     /KNOWN_COMMANDS = \[[\s\S]*"help"[\s\S]*\]/,
     "'help' must be a known command so the did-you-mean interceptor skips it",
   );
+});
+
+test("polling and the global stream go through the shared data layer (IM-13/IM-27)", () => {
+  const hooksDir = new URL("src/hooks/", repoRoot);
+  for (const name of readdirSync(hooksDir)) {
+    if (!name.endsWith(".ts") || name === "use-polled-json.ts") continue;
+    const source = readRepoFile(`src/hooks/${name}`);
+    assert.ok(
+      !source.includes("setInterval("),
+      `${name} must poll via usePolledJson, not its own setInterval`,
+    );
+    if (name !== "use-global-stream.ts" && name !== "use-session-chat.ts") {
+      assert.ok(
+        !source.includes("new EventSource("),
+        `${name} must subscribe via useGlobalStreamEvent`,
+      );
+    }
+  }
+  const commandStream = readRepoFile("src/components/dashboard/command-stream.tsx");
+  assert.ok(!commandStream.includes("new EventSource("));
 });
