@@ -29,17 +29,43 @@ export default function SessionDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [session, setSession] = useState<Session | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [tab, setTab] = useState<DetailTab>("chat");
 
   useEffect(() => {
-    const fetchSession = () => {
-      fetch(`/api/sessions/${params.id}`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then(setSession);
+    // IM-14: 404/500/network used to map to setSession(null), leaving the
+    // page on "Loading…" forever while polling a dead endpoint.
+    let stopped = false;
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const stopPolling = () => {
+      stopped = true;
+      if (interval) clearInterval(interval);
     };
-    fetchSession();
-    const interval = setInterval(fetchSession, 5000);
-    return () => clearInterval(interval);
+
+    const fetchSession = async () => {
+      try {
+        const res = await fetch(`/api/sessions/${params.id}`);
+        if (stopped) return;
+        if (res.status === 404) {
+          setLoadError("Session not found. It may have been deleted.");
+          stopPolling();
+          return;
+        }
+        if (!res.ok) {
+          setLoadError(`Could not load session (HTTP ${res.status}).`);
+          return;
+        }
+        setLoadError(null);
+        setSession(await res.json());
+      } catch {
+        if (!stopped) setLoadError("Could not reach the DevLog server.");
+      }
+    };
+
+    void fetchSession();
+    interval = setInterval(fetchSession, 5000);
+    return stopPolling;
   }, [params.id]);
 
   const handleKill = async () => {
@@ -58,10 +84,20 @@ export default function SessionDetailPage() {
   if (!session) {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-120px)]">
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm">Loading session...</span>
-        </div>
+        {loadError ? (
+          <div className="flex flex-col items-center gap-3 text-muted-foreground">
+            <span className="text-sm">{loadError}</span>
+            <Button variant="outline" size="sm" onClick={() => router.push("/sessions")}>
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Back to sessions
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm">Loading session...</span>
+          </div>
+        )}
       </div>
     );
   }

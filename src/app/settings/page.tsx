@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -296,7 +296,18 @@ export default function SettingsPage() {
     models: [],
   });
 
+  // IM-12: the scan was keyed on the whole localCliAgentEnv object, so every
+  // keystroke in any env field re-fired a PATH scan, and responses could
+  // resolve out of order. Key on the *_BIN values the scan actually uses,
+  // debounce typing, and guard against stale responses.
+  const scanEnvKey = useMemo(
+    () => JSON.stringify(buildLocalCliScanEnv(settings.localCliAgentEnv)),
+    [settings.localCliAgentEnv],
+  );
+  const scanSeqRef = useRef(0);
+
   const loadAgents = useCallback(async () => {
+    const seq = ++scanSeqRef.current;
     setScanning(true);
     setScanError(null);
     try {
@@ -305,25 +316,29 @@ export default function SettingsPage() {
         headers: { "content-type": "application/json" },
         cache: "no-store",
         body: JSON.stringify({
-          local_cli_agent_env: buildLocalCliScanEnv(
-            settings.localCliAgentEnv,
-          ),
+          local_cli_agent_env: JSON.parse(scanEnvKey),
         }),
       });
       if (!response.ok) {
         throw new Error(`scan failed: ${response.status}`);
       }
-      setAgents(normalizeAgentsPayload(await response.json()));
+      const agentsPayload = normalizeAgentsPayload(await response.json());
+      if (seq !== scanSeqRef.current) return;
+      setAgents(agentsPayload);
     } catch (error) {
+      if (seq !== scanSeqRef.current) return;
       setAgents(FALLBACK_LOCAL_CLI_AGENTS);
       setScanError(error instanceof Error ? error.message : "scan failed");
     } finally {
-      setScanning(false);
+      if (seq === scanSeqRef.current) setScanning(false);
     }
-  }, [settings.localCliAgentEnv]);
+  }, [scanEnvKey]);
 
   useEffect(() => {
-    loadAgents();
+    const timer = setTimeout(() => {
+      void loadAgents();
+    }, 400);
+    return () => clearTimeout(timer);
   }, [loadAgents]);
 
   useEffect(() => {
