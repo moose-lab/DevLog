@@ -563,20 +563,39 @@ export function useSessionChat(
     };
   }, [clearReconnectTimeout, connect]);
 
-  // Send a follow-up message — always allowed, queued if processing
+  // Send a follow-up message — always allowed, queued if processing.
+  // Returns whether the server accepted it (IM-30: failures used to vanish —
+  // no res.ok check, no catch, and the input was already cleared).
   const sendMessage = useCallback(
-    async (content: string) => {
-      if (!sessionId || !content.trim()) return;
+    async (content: string): Promise<boolean> => {
+      if (!sessionId || !content.trim()) return false;
       setError(null);
-      await fetch(`/api/sessions/${sessionId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "send",
-          message: content.trim(),
-          ...continuationRuntimePayload,
-        }),
-      });
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "send",
+            message: content.trim(),
+            ...continuationRuntimePayload,
+          }),
+        });
+        if (!res.ok) {
+          let message = `Send failed (HTTP ${res.status})`;
+          try {
+            const body = (await res.json()) as { error?: unknown };
+            if (body?.error) message = String(body.error);
+          } catch {
+            // keep the HTTP status message
+          }
+          setError(message);
+          return false;
+        }
+        return true;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Send failed");
+        return false;
+      }
     },
     [continuationRuntimePayload, sessionId]
   );

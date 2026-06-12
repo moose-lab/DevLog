@@ -1,29 +1,20 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useMemo } from "react";
 import type { DevLogStats } from "@/core/types-dashboard";
 import { normalizeDevLogStats } from "@/core/devlog-dashboard";
+import { usePolledJson } from "./use-polled-json";
 
 export function useDevlog() {
-  const [stats, setStats] = useState<DevLogStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data, loading, error, refresh } = usePolledJson<unknown>(
+    "/api/devlog?command=stats",
+    30_000,
+  );
 
-  const fetchStats = useCallback(async () => {
-    try {
-      const res = await fetch("/api/devlog?command=stats");
-      if (res.ok) {
-        setStats(normalizeDevLogStats(await res.json()));
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const stats: DevLogStats | null = useMemo(
+    () => (data == null ? null : normalizeDevLogStats(data)),
+    [data],
+  );
 
-  useEffect(() => {
-    fetchStats();
-    const interval = setInterval(fetchStats, 30000);
-    return () => clearInterval(interval);
-  }, [fetchStats]);
-
-  return { stats, loading, refresh: fetchStats };
+  return { stats, loading, error, refresh };
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { usePolledJson } from "./use-polled-json";
 
 export interface TodayStats {
   sessions: number;
@@ -12,25 +12,10 @@ export interface TodayStats {
 }
 
 export function useTodayStats() {
-  const [stats, setStats] = useState<TodayStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data, loading, error, refresh } = usePolledJson<TodayStats>(
+    "/api/devlog?command=today",
+    30_000,
+  );
 
-  const fetchStats = useCallback(async () => {
-    try {
-      const res = await fetch("/api/devlog?command=today");
-      if (res.ok) {
-        setStats(await res.json());
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchStats();
-    const interval = setInterval(fetchStats, 30_000);
-    return () => clearInterval(interval);
-  }, [fetchStats]);
-
-  return { stats, loading, refresh: fetchStats };
+  return { stats: data, loading, error, refresh };
 }

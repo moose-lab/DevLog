@@ -1,28 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
 import type { Worktree } from "@/core/types-dashboard";
+import { usePolledJson } from "./use-polled-json";
 
 export function useWorktrees() {
-  const [worktrees, setWorktrees] = useState<Worktree[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const fetchWorktrees = useCallback(async () => {
-    try {
-      const res = await fetch("/api/worktrees");
-      if (res.ok) {
-        setWorktrees(await res.json());
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchWorktrees();
-    const interval = setInterval(fetchWorktrees, 10000);
-    return () => clearInterval(interval);
-  }, [fetchWorktrees]);
+  const { data, loading, error, refresh } = usePolledJson<Worktree[]>("/api/worktrees", 10_000);
+  const worktrees = data ?? [];
 
   const createWorktree = async (name: string, branch: string, baseBranch?: string) => {
     const res = await fetch("/api/worktrees", {
@@ -31,8 +14,9 @@ export function useWorktrees() {
       body: JSON.stringify({ name, branch, baseBranch }),
     });
     if (res.ok) {
-      await fetchWorktrees();
-      return (await res.json()) as Worktree;
+      const created = (await res.json()) as Worktree;
+      await refresh();
+      return created;
     }
     const err = await res.json();
     throw new Error(err.error);
@@ -43,9 +27,9 @@ export function useWorktrees() {
       method: "DELETE",
     });
     if (res.ok) {
-      await fetchWorktrees();
+      await refresh();
     }
   };
 
-  return { worktrees, loading, createWorktree, removeWorktree, refresh: fetchWorktrees };
+  return { worktrees, loading, error, createWorktree, removeWorktree, refresh };
 }

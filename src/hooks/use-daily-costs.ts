@@ -1,32 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useMemo } from "react";
 import type { DailyEntry } from "@/app/api/devlog/daily/route";
+import { usePolledJson } from "./use-polled-json";
 
 export type { DailyEntry };
 
 export function useDailyCosts(days: 7 | 30 = 30) {
-  const [data, setData] = useState<DailyEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const fetch_ = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/devlog/daily?days=${days}`);
-      if (res.ok) {
-        const json = await res.json();
-        setData(json.days ?? []);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [days]);
-
-  useEffect(() => {
-    setLoading(true);
-    fetch_();
-    const interval = setInterval(fetch_, 60_000);
-    return () => clearInterval(interval);
-  }, [fetch_]);
-
-  return { days: data, loading };
+  const { data, loading, error } = usePolledJson<{ days?: DailyEntry[] }>(
+    `/api/devlog/daily?days=${days}`,
+    60_000,
+  );
+  const entries = useMemo(() => data?.days ?? [], [data]);
+  return { days: entries, loading, error };
 }

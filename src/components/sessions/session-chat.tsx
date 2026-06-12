@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   useSessionChat,
   type ChatMsg,
@@ -279,8 +279,15 @@ function PermissionPrompt({
   );
 }
 
-// Single message bubble
-function MessageBubble({ msg }: { msg: ChatMsg }) {
+// Cap how much history stays mounted; very long sessions otherwise keep
+// thousands of markdown trees alive (IM-28).
+const MESSAGE_WINDOW = 200;
+
+// Single message bubble. Memoized (IM-28): every streaming text_delta
+// re-rendered <ReactMarkdown> for ALL historical messages, many times per
+// second — message objects are append-only and keep their identity, so
+// memo skips everything but genuinely new bubbles.
+const MessageBubble = memo(function MessageBubble({ msg }: { msg: ChatMsg }) {
   const isUser = msg.role === "user";
 
   return (
@@ -334,7 +341,7 @@ function MessageBubble({ msg }: { msg: ChatMsg }) {
       </div>
     </div>
   );
-}
+});
 
 // Streaming indicator while Claude is responding
 function StreamingBubble({
@@ -503,9 +510,13 @@ export function SessionChat({
     const text = input.trim();
     if (!text || sending || !canSend) return;
     setSending(true);
-    setInput("");
     try {
-      await sendMessage(text);
+      // Only clear the input once the server accepted the message — a
+      // failed send keeps the user's instruction in the box (IM-30).
+      const sent = await sendMessage(text);
+      if (sent) {
+        setInput("");
+      }
     } finally {
       setSending(false);
     }
@@ -580,7 +591,12 @@ export function SessionChat({
           </div>
         )}
 
-        {messages.map((msg) => (
+        {messages.length > MESSAGE_WINDOW && (
+          <p className="px-4 py-1 text-xs text-muted-foreground">
+            Showing the latest {MESSAGE_WINDOW} of {messages.length} messages
+          </p>
+        )}
+        {messages.slice(-MESSAGE_WINDOW).map((msg) => (
           <MessageBubble key={msg.id} msg={msg} />
         ))}
 

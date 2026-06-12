@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { usePolledJson } from "./use-polled-json";
 
 interface VccData {
   full: string;
@@ -14,30 +14,14 @@ export function useVcc(
   isActive: boolean,
   grep?: string
 ) {
-  const [data, setData] = useState<VccData | null>(null);
-  const [loading, setLoading] = useState(false);
+  const params = new URLSearchParams();
+  if (grep) params.set("grep", grep);
+  const url = sessionId ? `/api/sessions/${sessionId}/vcc?${params}` : null;
 
-  const fetchVcc = useCallback(async () => {
-    if (!sessionId) return;
-    setLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (grep) params.set("grep", grep);
-      const url = `/api/sessions/${sessionId}/vcc?${params}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        setData(await res.json());
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId, grep]);
+  const { data, loading, error, refresh } = usePolledJson<VccData>(
+    url,
+    isActive ? 15_000 : 60_000,
+  );
 
-  useEffect(() => {
-    fetchVcc();
-    const interval = setInterval(fetchVcc, isActive ? 15_000 : 60_000);
-    return () => clearInterval(interval);
-  }, [fetchVcc, isActive]);
-
-  return { data, loading, refresh: fetchVcc };
+  return { data, loading: url ? loading : false, error, refresh };
 }

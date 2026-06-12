@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import type { Task, TaskStatus, TaskPriority, Session } from "@/core/types-dashboard";
 import type { SessionRuntimeAuthInput } from "@/core/session-runtime-auth";
 import type { ChatStreamEvent } from "@/core/stream-manager";
+import { usePolledJson } from "./use-polled-json";
+import { useGlobalStreamEvent } from "./use-global-stream";
 
 function shouldRefreshTasksForEvent(event: ChatStreamEvent): boolean {
   return (
@@ -14,44 +16,18 @@ function shouldRefreshTasksForEvent(event: ChatStreamEvent): boolean {
 }
 
 export function useTasks() {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data, loading, error, refresh } = usePolledJson<Task[]>("/api/tasks", 5000);
+  // Optimistic overlay for drag-drop (IM-11): applied immediately on
+  // reorder so cards don't snap back while the POST + refetch round-trips.
+  const [optimistic, setOptimistic] = useState<Task[] | null>(null);
+  const tasks = optimistic ?? data ?? [];
+  const fetchTasks = refresh;
 
-  const fetchTasks = useCallback(async () => {
-    try {
-      const res = await fetch("/api/tasks");
-      if (res.ok) {
-        setTasks(await res.json());
-      }
-    } finally {
-      setLoading(false);
+  useGlobalStreamEvent((event) => {
+    if (shouldRefreshTasksForEvent(event)) {
+      void fetchTasks();
     }
-  }, []);
-
-  useEffect(() => {
-    fetchTasks();
-    const interval = setInterval(fetchTasks, 5000);
-    return () => clearInterval(interval);
-  }, [fetchTasks]);
-
-  useEffect(() => {
-    const source = new EventSource("/api/devlog/stream");
-    source.onmessage = (message) => {
-      let event: ChatStreamEvent;
-      try {
-        event = JSON.parse(message.data) as ChatStreamEvent;
-      } catch {
-        return;
-      }
-      if (shouldRefreshTasksForEvent(event)) {
-        fetchTasks();
-      }
-    };
-
-    return () => {
-      source.close();
-    };
-  }, [fetchTasks]);
+  });
 
   const createTask = async (data: {
     title: string;
@@ -93,12 +69,27 @@ export function useTasks() {
   const reorder = async (
     items: { id: string; status: TaskStatus; sort_order: number }[]
   ) => {
-    await fetch("/api/tasks/reorder", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items }),
-    });
-    await fetchTasks();
+    const updates = new Map(items.map((item) => [item.id, item]));
+    setOptimistic(
+      (data ?? []).map((task) => {
+        const update = updates.get(task.id);
+        return update
+          ? { ...task, status: update.status, sort_order: update.sort_order }
+          : task;
+      }),
+    );
+    try {
+      await fetch("/api/tasks/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      // refresh bumps the poll store's sequence, so an in-flight poll that
+      // started before the reorder can't resurrect the old order.
+      await fetchTasks();
+    } finally {
+      setOptimistic(null);
+    }
   };
 
   const tasksByStatus = (status: TaskStatus) =>
@@ -126,6 +117,7 @@ export function useTasks() {
   return {
     tasks,
     loading,
+    error,
     createTask,
     updateTask,
     deleteTask,
