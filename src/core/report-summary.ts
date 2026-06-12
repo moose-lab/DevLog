@@ -11,6 +11,7 @@ import {
   type HumanReportRisk,
 } from "./report-evidence";
 import { HUMAN_REPORT_SKILL } from "./report-skill";
+import { getTodayDateKey, localDateKey, parseDbTimestamp } from "./report-dates";
 
 export type ReportTask = Task;
 export type ReportSession = Session;
@@ -137,12 +138,7 @@ const ACTIVE_SESSION_STATUSES = new Set<SessionStatus>([
   "paused",
 ]);
 
-export function getTodayDateKey(date = new Date()): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
+export { getTodayDateKey } from "./report-dates";
 
 export function normalizeReportDate(value: string | null): string | null {
   if (value == null || value.trim() === "") return getTodayDateKey();
@@ -150,7 +146,7 @@ export function normalizeReportDate(value: string | null): string | null {
   const date = value.trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
 
-  const parsed = parseDate(`${date} 00:00:00`);
+  const parsed = parseCalendarDate(`${date} 00:00:00`);
   if (!parsed) return null;
   return getTodayDateKey(parsed) === date ? date : null;
 }
@@ -167,7 +163,7 @@ export function buildReportRange(
 ): ReportRange | null {
   const normalizedPeriod = normalizeReportPeriod(period);
   if (!normalizedPeriod) return null;
-  const parsed = parseDate(`${date} 00:00:00`);
+  const parsed = parseCalendarDate(`${date} 00:00:00`);
   if (!parsed) return null;
 
   if (normalizedPeriod === "daily") {
@@ -500,7 +496,7 @@ function sessionTouchedInRange(session: ReportSession, range: ReportRange): bool
 }
 
 function dateInRange(value: string | null | undefined, range: ReportRange): boolean {
-  const key = dateKey(value);
+  const key = localDateKey(value);
   return Boolean(key && key >= range.startDate && key <= range.endDate);
 }
 
@@ -582,26 +578,21 @@ function toSessionItem(
 
 function sessionRuntimeMinutes(session: ReportSession): number | null {
   if (!session.ended_at) return null;
-  const started = parseDate(session.started_at);
-  const ended = parseDate(session.ended_at);
+  const started = parseDbTimestamp(session.started_at);
+  const ended = parseDbTimestamp(session.ended_at);
   if (!started || !ended) return null;
   return Math.max(0, Math.round((ended.getTime() - started.getTime()) / 60_000));
 }
 
-function dateKey(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
-  return match?.[1] ?? null;
-}
-
-function parseDate(value: string): Date | null {
+/** Parses a "YYYY-MM-DD HH:MM:SS" string as a LOCAL calendar moment. */
+function parseCalendarDate(value: string): Date | null {
   const date = new Date(value.includes("T") ? value : value.replace(" ", "T"));
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function compareDateStrings(a: string, b: string): number {
-  const left = parseDate(a)?.getTime() ?? 0;
-  const right = parseDate(b)?.getTime() ?? 0;
+  const left = parseDbTimestamp(a)?.getTime() ?? 0;
+  const right = parseDbTimestamp(b)?.getTime() ?? 0;
   return left - right;
 }
 
@@ -732,7 +723,7 @@ function formatMinutes(minutes: number): string {
 }
 
 function formatDateTime(value: string): string {
-  const date = parseDate(value);
+  const date = parseDbTimestamp(value);
   if (!date) return value;
   return date.toLocaleString("en", {
     year: "numeric",

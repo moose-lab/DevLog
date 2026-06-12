@@ -12,11 +12,31 @@ import { statuslineCommand } from "./commands/statusline";
 import { setupStatuslineCommand } from "./commands/setup-statusline";
 import { setupTmuxCommand } from "./commands/setup-tmux";
 import { serveCommand } from "./commands/serve";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { initOutput, outputJson } from "./utils/output";
 import { levenshtein } from "./utils/format";
+import { resolvePackageRoot } from "./lib/package-root";
 import type { GlobalOptions } from "../core/types";
 
-const VERSION = "0.4.0";
+// Version comes from package.json — a hardcoded constant drifted two
+// releases behind the published package.
+const VERSION = readPackageVersion();
+
+function readPackageVersion(): string {
+  try {
+    const root = resolvePackageRoot(import.meta.dirname);
+    if (root) {
+      const pkg = JSON.parse(
+        readFileSync(join(root, "package.json"), "utf-8"),
+      ) as { version?: string };
+      if (pkg.version) return pkg.version;
+    }
+  } catch {
+    // fall through
+  }
+  return "0.0.0";
+}
 
 const HELP_TEXT = `
 ${chalk.bold.cyan("  ▌")} ${chalk.bold.white("DevLog")} ${chalk.dim(`v${VERSION}`)}
@@ -66,6 +86,7 @@ const KNOWN_COMMANDS = [
   "statusline",
   "setup-statusline",
   "setup-tmux",
+  "help",
 ];
 
 function getGlobalOpts(): GlobalOptions {
@@ -104,15 +125,29 @@ program.hook("preAction", () => {
   initOutput({ json: !!opts.json, quiet: !!opts.quiet });
 });
 
-// ── Default: `devlog` with no args → dashboard ──────────
-program.action(async () => {
-  const globalOpts = getGlobalOpts();
-  try {
-    await dashboardCommand(globalOpts);
-  } catch (err) {
-    handleError(err, globalOpts);
-  }
-});
+// ── Default: `devlog` → dashboard, `devlog <ref>` → show ─
+// The optional [ref] argument must be declared: commander 14 rejects
+// undeclared extra words with a hard "too many arguments" error (IM-15).
+program
+  .argument(
+    "[ref]",
+    "Session number (1, 2, 3) or ID prefix — shorthand for `devlog show <ref>`"
+  )
+  .action(async (ref: string | undefined) => {
+    if (ref === "help") {
+      program.help();
+    }
+    const globalOpts = getGlobalOpts();
+    try {
+      if (ref) {
+        await showCommand(ref, { limit: "50" }, globalOpts);
+      } else {
+        await dashboardCommand(globalOpts);
+      }
+    } catch (err) {
+      handleError(err, globalOpts);
+    }
+  });
 
 // ── devlog serve ─────────────────────────────────────────
 program

@@ -99,6 +99,22 @@ export interface SessionMeta {
   firstActivity: Date;
   errorCount: number;
   costByModel: Record<string, number>;
+  dailyUsage?: SessionDailyUsage[];
+}
+
+/**
+ * Cost and token usage aggregated per (local day, model) — lets cost
+ * reporting attribute spend to the day each message ran instead of booking
+ * a whole session on its last-activity day (IM-24).
+ */
+export interface SessionDailyUsage {
+  date: string;
+  model: string;
+  costUSD: number;
+  lastTimestamp: string;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
 }
 
 export interface Session {

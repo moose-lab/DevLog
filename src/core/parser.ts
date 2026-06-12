@@ -7,9 +7,12 @@ import type {
   TextBlock,
   ToolUseBlock,
   ToolResultBlock,
+  SessionDailyUsage,
   SessionMeta,
+  TokenUsage,
 } from "./types";
 import { computeCost } from "./pricing";
+import { getTodayDateKey } from "./report-dates";
 
 // Types to skip entirely
 const SKIP_TYPES = new Set([
@@ -67,7 +70,11 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
     models: [],
     firstUserMessage: "",
     lastActivity: new Date(0),
-    firstActivity: new Date(),
+    // Max-date sentinel for min-tracking; normalized to epoch after the scan
+    // so discovery's `getTime() > 0` birthtime fallback can fire (IM-4 — a
+    // `new Date()` init made it always truthy and creation dates drifted to
+    // scan time).
+    firstActivity: new Date(8640000000000000),
     errorCount: 0,
     costByModel: {},
   };
@@ -76,6 +83,40 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
   const fileSet = new Set<string>();
   const modelSet = new Set<string>();
   const costedMessageIds = new Set<string>();
+
+  // Per-(local day, model) cost/token buckets (IM-24) — bounded by days ×
+  // models, so safe to keep on the meta even for long sessions.
+  const dailyUsage = new Map<string, SessionDailyUsage>();
+  const addDailyUsage = (
+    ts: Date | null,
+    model: string,
+    cost: number,
+    usage?: TokenUsage,
+  ) => {
+    const when =
+      ts ?? (meta.lastActivity.getTime() > 0 ? meta.lastActivity : new Date(0));
+    const date = getTodayDateKey(when);
+    const key = `${date}\0${model}`;
+    const bucket = dailyUsage.get(key) ?? {
+      date,
+      model,
+      costUSD: 0,
+      lastTimestamp: when.toISOString(),
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+    };
+    bucket.costUSD += cost;
+    const iso = when.toISOString();
+    if (iso > bucket.lastTimestamp) bucket.lastTimestamp = iso;
+    if (usage) {
+      bucket.inputTokens +=
+        (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+      bucket.cachedInputTokens += usage.cache_read_input_tokens ?? 0;
+      bucket.outputTokens += usage.output_tokens ?? 0;
+    }
+    dailyUsage.set(key, bucket);
+  };
 
   const rl = createInterface({
     input: createReadStream(filePath, { encoding: "utf-8" }),
@@ -127,20 +168,17 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
         const cost = computeCost(model, usage);
         meta.totalCostUSD += cost;
         meta.costByModel[model] = (meta.costByModel[model] || 0) + cost;
+        addDailyUsage(ts, model, cost, usage);
       } else if (event.costUSD && typeof event.costUSD === "number") {
         // Legacy fallback
         meta.totalCostUSD += event.costUSD;
         const m = model || "unknown";
         meta.costByModel[m] = (meta.costByModel[m] || 0) + event.costUSD;
+        addDailyUsage(ts, m, event.costUSD);
       }
 
-      // Duration from system turn_duration events
-      if (event.type === "system" && event.subtype === "turn_duration") {
-        const dur = (event as Record<string, unknown>).durationMs;
-        if (typeof dur === "number") {
-          meta.totalDurationMs += dur;
-        }
-      }
+      // Duration: one generic read covers turn_duration system events too —
+      // a special-cased branch on top of this double-counted them (IM-1).
       if (event.durationMs && typeof event.durationMs === "number") {
         meta.totalDurationMs += event.durationMs;
       }
@@ -183,6 +221,14 @@ export async function scanSession(filePath: string): Promise<SessionMeta> {
   meta.uniqueTools = [...toolSet];
   meta.filesReferenced = [...fileSet];
   meta.models = [...modelSet];
+
+  if (meta.firstActivity.getTime() === 8640000000000000) {
+    meta.firstActivity = new Date(0);
+  }
+
+  meta.dailyUsage = [...dailyUsage.values()].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.model.localeCompare(b.model),
+  );
 
   return meta;
 }
@@ -285,18 +331,6 @@ function normalizeEvent(
       }
     }
 
-    if (typeof content === "string") {
-      events.push({
-        id: baseId,
-        sessionId,
-        timestamp,
-        role: role,
-        type: "message",
-        content: content,
-        raw,
-      });
-    }
-
     if (events.length === 0) {
       events.push({
         id: baseId,
@@ -308,14 +342,20 @@ function normalizeEvent(
         raw,
       });
     }
-  } else if (role === "human" && typeof content === "string") {
+  } else if (role && typeof content === "string") {
+    // Legacy string-content lines (both roles) — this branch was previously
+    // nested inside the array case and human-only, so assistant messages in
+    // this shape produced zero events (IM-2).
     events.push({
       id: baseId,
       sessionId,
       timestamp,
-      role: "human",
+      role: role,
       type: "message",
       content: content,
+      costUSD: raw.costUSD,
+      durationMs: raw.durationMs,
+      model,
       raw,
     });
   } else if (raw.type === "summary") {
