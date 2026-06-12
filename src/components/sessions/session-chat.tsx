@@ -503,9 +503,13 @@ export function SessionChat({
     const text = input.trim();
     if (!text || sending || !canSend) return;
     setSending(true);
-    setInput("");
     try {
-      await sendMessage(text);
+      // Only clear the input once the server accepted the message — a
+      // failed send keeps the user's instruction in the box (IM-30).
+      const sent = await sendMessage(text);
+      if (sent) {
+        setInput("");
+      }
     } finally {
       setSending(false);
     }
