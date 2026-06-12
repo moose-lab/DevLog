@@ -473,11 +473,15 @@ export function useSessionChat(
 
           // Permission request from Claude
           case "permission_request":
-            setPendingPermission({
-              requestId: data.request_id!,
-              toolName: data.tool_name!,
-              toolInput: data.tool_input ?? {},
-            });
+            // Stream fields are optional — a malformed event must not seed
+            // a permission prompt with undefined id/tool.
+            if (data.request_id && data.tool_name) {
+              setPendingPermission({
+                requestId: data.request_id,
+                toolName: data.tool_name,
+                toolInput: data.tool_input ?? {},
+              });
+            }
             break;
 
           // Permission resolved
@@ -486,19 +490,22 @@ export function useSessionChat(
             break;
 
           // Message queued (sent during active turn)
-          case "message_queued":
+          case "message_queued": {
             setQueuedCount(data.position ?? 0);
+            const queuedContent = data.content;
+            if (!queuedContent) break;
             // Add a queued placeholder message
             setMessages((prev) => [
               ...prev,
               {
                 id: nextId(),
                 role: "user",
-                content: data.content!,
+                content: queuedContent,
                 isQueued: true,
               },
             ]);
             break;
+          }
 
           // Queue drained
           case "queue_drained":

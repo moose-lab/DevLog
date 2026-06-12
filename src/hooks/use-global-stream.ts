@@ -16,12 +16,16 @@ import type { ChatStreamEvent } from "@/core/stream-manager";
 type Listener = (event: ChatStreamEvent) => void;
 
 let source: EventSource | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 const listeners = new Set<Listener>();
+
+const RECONNECT_DELAY_MS = 3000;
 
 function ensureSource(): void {
   if (source) return;
-  source = new EventSource("/api/devlog/stream");
-  source.onmessage = (message) => {
+  const es = new EventSource("/api/devlog/stream");
+  source = es;
+  es.onmessage = (message) => {
     let event: ChatStreamEvent;
     try {
       event = JSON.parse(message.data) as ChatStreamEvent;
@@ -30,6 +34,21 @@ function ensureSource(): void {
     }
     for (const listener of listeners) listener(event);
   };
+  es.onerror = () => {
+    // Native EventSource retries transient drops on its own. CLOSED is
+    // permanent (e.g. a non-2xx response during a server restart) — without
+    // this handler the singleton stayed truthy-but-dead and every future
+    // subscriber silently received no events.
+    if (es.readyState !== EventSource.CLOSED) return;
+    es.close();
+    if (source === es) source = null;
+    if (listeners.size > 0 && !reconnectTimer) {
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (listeners.size > 0) ensureSource();
+      }, RECONNECT_DELAY_MS);
+    }
+  };
 }
 
 export function subscribeGlobalStream(listener: Listener): () => void {
@@ -37,9 +56,15 @@ export function subscribeGlobalStream(listener: Listener): () => void {
   ensureSource();
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0 && source) {
-      source.close();
-      source = null;
+    if (listeners.size === 0) {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      if (source) {
+        source.close();
+        source = null;
+      }
     }
   };
 }
