@@ -310,18 +310,28 @@ export function closeDb(): void {
   }
 }
 
-// Graceful shutdown
-function shutdown() {
-  try {
-    // Import processManager dynamically to avoid circular deps
-    const { processManager } = require("./process-manager");
-    processManager.killAll();
-  } catch {
-    // process-manager might not be loaded
-  }
-  closeDb();
-  process.exit(0);
-}
+// Graceful shutdown. Registration is explicit (CLI entrypoint / Next
+// instrumentation) — registering at import time hijacked the host's signal
+// handling and process.exit(0) masked non-zero exit codes for any process
+// that merely imported the data layer.
+let shutdownRegistered = false;
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+export function registerGracefulShutdown(): void {
+  if (shutdownRegistered) return;
+  shutdownRegistered = true;
+
+  const shutdown = (signal: NodeJS.Signals) => {
+    try {
+      // Import processManager dynamically to avoid circular deps
+      const { processManager } = require("./process-manager");
+      processManager.killAll();
+    } catch {
+      // process-manager might not be loaded
+    }
+    closeDb();
+    process.exit(128 + (signal === "SIGINT" ? 2 : 15));
+  };
+
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+}

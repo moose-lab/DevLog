@@ -6,10 +6,31 @@ const CONFIG_PATH = path.join(process.cwd(), "devlog.config.json");
 
 let _config: DevlogConfig | null = null;
 
+function defaultConfig(): DevlogConfig {
+  // Fresh clones have no devlog.config.json (it is machine-specific and
+  // untracked) — default to treating the current checkout as the project.
+  return {
+    projects: [
+      {
+        id: "devlog",
+        name: path.basename(process.cwd()),
+        path: process.cwd(),
+        defaultBranch: "main",
+      },
+    ],
+    activeProject: "devlog",
+    port: 3333,
+  };
+}
+
 function loadConfig(): DevlogConfig {
   if (_config) return _config;
-  const raw = fs.readFileSync(CONFIG_PATH, "utf-8");
-  _config = JSON.parse(raw) as DevlogConfig;
+  try {
+    _config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8")) as DevlogConfig;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    _config = defaultConfig();
+  }
   return _config;
 }
 

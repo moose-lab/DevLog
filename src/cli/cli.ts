@@ -17,6 +17,7 @@ import { join } from "path";
 import { initOutput, outputJson } from "./utils/output";
 import { levenshtein } from "./utils/format";
 import { resolvePackageRoot } from "./lib/package-root";
+import { registerGracefulShutdown } from "../core/db";
 import type { GlobalOptions } from "../core/types";
 
 // Version comes from package.json — a hardcoded constant drifted two
@@ -71,6 +72,8 @@ ${chalk.cyan("  devlog --json")}${chalk.dim("                JSON output for scr
 ${chalk.cyan("  devlog -q")}${chalk.dim("                    Quiet mode (no spinners/banners)")}
 ${chalk.cyan("  devlog --no-color")}${chalk.dim("            Plain text, no ANSI escapes")}
 `;
+
+registerGracefulShutdown();
 
 const program = new Command();
 
