@@ -84,7 +84,7 @@
     "clsx": "^2.1.1",
     "commander": "^14.0.3",
     "dayjs": "^1.11.19",
-    "lucide-react": "^0.563.0",
+    "lucide-react": "^1.18.0",
     "next": "16.1.6",
     "node-pty": "^1.0.0",
     "ora": "^9.3.0",
