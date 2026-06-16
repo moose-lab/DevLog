@@ -1,9 +1,17 @@
 {
   "name": "@moose-lab/devlog",
   "version": "0.5.0",
-  "description": "Dev logs and dashboard for your Claude Code sessions",
+  "description": "Searchable AI coding-agent work journal CLI and dashboard for Claude Code sessions",
   "type": "module",
   "packageManager": "bun@1.3.14",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moose-lab/DevLog.git"
+  },
+  "homepage": "https://github.com/moose-lab/DevLog#readme",
+  "bugs": {
+    "url": "https://github.com/moose-lab/DevLog/issues"
+  },
   "bin": {
     "devlog": "./dist/cli.js"
   },
@@ -31,13 +39,19 @@
     "quality": "bun run quality:ci"
   },
   "keywords": [
+    "ai-coding-agents",
+    "agent-observability",
+    "agent-workflows",
     "claude",
+    "claude-code",
+    "coding-agent",
     "devlog",
     "cli",
     "developer-tools",
-    "dashboard"
+    "dashboard",
+    "work-journal"
   ],
-  "author": "",
+  "author": "Moose Lab",
   "license": "MIT",
   "engines": {
     "node": ">=20.11"
