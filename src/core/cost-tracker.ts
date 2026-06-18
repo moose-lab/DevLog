@@ -88,6 +88,15 @@ interface UsageRecord {
   subscriptionCredits: number;
 }
 
+interface CachedCodexScan {
+  mtimeMs: number;
+  size: number;
+  parsed: {
+    records: UsageRecord[];
+    quota: CostQuotaWindow[];
+  };
+}
+
 interface CodexRateLimitWindow {
   used_percent?: number;
   window_minutes?: number;
@@ -129,6 +138,11 @@ const CODEX_CREDIT_RATES: Record<string, { input: number; cachedInput: number; o
   "gpt-5-codex": { input: 43.75, cachedInput: 4.375, output: 350 },
 };
 
+const CODEX_SCAN_CONCURRENCY = 8;
+const codexScanCache = new Map<string, CachedCodexScan>();
+let codexCacheHits = 0;
+let codexCacheMisses = 0;
+
 export function getCodexSessionsDir(): string {
   return join(homedir(), ".codex", "sessions");
 }
@@ -139,6 +153,20 @@ export function getCodexArchivedSessionsDir(): string {
 
 export function emptyCostTotals(): CostPeriodTotals {
   return { ...EMPTY_TOTALS };
+}
+
+export function getCostTrackerCacheStats(): { hits: number; misses: number; entries: number } {
+  return {
+    hits: codexCacheHits,
+    misses: codexCacheMisses,
+    entries: codexScanCache.size,
+  };
+}
+
+export function clearCostTrackerCache(): void {
+  codexScanCache.clear();
+  codexCacheHits = 0;
+  codexCacheMisses = 0;
 }
 
 export function addCostTotals(target: CostPeriodTotals, source: CostPeriodTotals | UsageRecord): void {
@@ -180,10 +208,22 @@ export async function buildCostReport(options: {
     }
   }
 
-  const codexFiles = await listCodexSessionFiles(codexSessionsDir, codexSessionsDir === getCodexSessionsDir());
+  const includeArchived = codexSessionsDir === getCodexSessionsDir();
+  const codexFiles = await listCodexSessionFiles(codexSessionsDir, includeArchived);
+  const seenCodexFiles = new Set<string>();
   const quota: CostQuotaWindow[] = [];
-  for (const filePath of codexFiles) {
-    const parsed = await scanCodexSession(filePath);
+
+  const parsedCodexSessions = await mapWithConcurrency(
+    codexFiles,
+    CODEX_SCAN_CONCURRENCY,
+    (filePath) => scanCodexSessionCached(filePath, seenCodexFiles)
+  );
+  pruneCodexScanCache(
+    [codexSessionsDir, ...(includeArchived ? [getCodexArchivedSessionsDir()] : [])],
+    seenCodexFiles
+  );
+
+  for (const parsed of parsedCodexSessions) {
     records.push(...parsed.records);
     quota.push(...parsed.quota);
   }
@@ -319,6 +359,63 @@ export async function scanCodexSession(filePath: string): Promise<{ records: Usa
   }
 
   return { records, quota };
+}
+
+async function scanCodexSessionCached(
+  filePath: string,
+  seenFiles: Set<string>
+): Promise<{ records: UsageRecord[]; quota: CostQuotaWindow[] } | null> {
+  try {
+    const fileStat = await stat(filePath);
+    seenFiles.add(filePath);
+
+    const cached = codexScanCache.get(filePath);
+    if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) {
+      codexCacheHits++;
+      return cached.parsed;
+    }
+
+    codexCacheMisses++;
+    const parsed = await scanCodexSession(filePath);
+    codexScanCache.set(filePath, {
+      mtimeMs: fileStat.mtimeMs,
+      size: fileStat.size,
+      parsed,
+    });
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function pruneCodexScanCache(roots: string[], seen: Set<string>): void {
+  const prefixes = roots.map((root) => (root.endsWith("/") ? root : `${root}/`));
+  for (const key of codexScanCache.keys()) {
+    if (prefixes.some((prefix) => key.startsWith(prefix)) && !seen.has(key)) {
+      codexScanCache.delete(key);
+    }
+  }
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R | null>
+): Promise<R[]> {
+  const results: (R | null)[] = new Array(items.length).fill(null);
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.max(1, Math.min(limit, items.length)) },
+    async () => {
+      for (;;) {
+        const index = next++;
+        if (index >= items.length) break;
+        results[index] = await fn(items[index]);
+      }
+    }
+  );
+  await Promise.all(workers);
+  return results.filter((item): item is R => item !== null);
 }
 
 async function listCodexSessionFiles(root: string, includeArchived: boolean): Promise<string[]> {
