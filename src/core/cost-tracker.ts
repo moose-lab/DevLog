@@ -7,8 +7,68 @@ import dayjs from "dayjs";
 import { discoverProjects } from "./discovery";
 import type { Session } from "./types";
 
-export type CostProvider = "claude_code" | "codex";
+export const COST_REPORT_PROVIDERS = ["claude_code", "codex"] as const;
+export type CostProvider = (typeof COST_REPORT_PROVIDERS)[number];
 export type BillingMode = "api" | "oauth_subscription";
+
+export type CostReportAgentCoverage =
+  | {
+      supported: true;
+      provider: CostProvider;
+      sourcePath: string;
+      cacheStrategy: string;
+    }
+  | {
+      supported: false;
+      unsupportedReason: string;
+    };
+
+export const COST_REPORT_AGENT_COVERAGE = {
+  claude: {
+    supported: true,
+    provider: "claude_code",
+    sourcePath: "~/.claude/projects/**/*.jsonl",
+    cacheStrategy: "discoverProjects() IM-23 cache keyed by path, mtimeMs, and size with bounded concurrency",
+  },
+  codex: {
+    supported: true,
+    provider: "codex",
+    sourcePath: "~/.codex/sessions/**/*.jsonl plus ~/.codex/archived_sessions/**/*.jsonl",
+    cacheStrategy: "scanCodexSessionCached() cache keyed by path, mtimeMs, and size with bounded concurrency",
+  },
+  "cursor-agent": {
+    supported: false,
+    unsupportedReason: "No durable local cost/usage history source is parsed by DevLog yet",
+  },
+  copilot: {
+    supported: false,
+    unsupportedReason: "No durable local cost/usage history source is parsed by DevLog yet",
+  },
+  gemini: {
+    supported: false,
+    unsupportedReason: "No durable local cost/usage history source is parsed by DevLog yet",
+  },
+  hermes: {
+    supported: false,
+    unsupportedReason: "Runner is pending and no durable local cost/usage history source is parsed by DevLog yet",
+  },
+  kimi: {
+    supported: false,
+    unsupportedReason: "Runner is pending and no durable local cost/usage history source is parsed by DevLog yet",
+  },
+  opencode: {
+    supported: false,
+    unsupportedReason: "No durable local cost/usage history source is parsed by DevLog yet",
+  },
+  pi: {
+    supported: false,
+    unsupportedReason: "Runner is pending and no durable local cost/usage history source is parsed by DevLog yet",
+  },
+  qwen: {
+    supported: false,
+    unsupportedReason: "No durable local cost/usage history source is parsed by DevLog yet",
+  },
+} as const satisfies Record<string, CostReportAgentCoverage>;
 
 export interface CostTokenTotals {
   inputTokens: number;

@@ -4,9 +4,12 @@ import { tmpdir } from "os";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as costTracker from "../cost-tracker";
+import { LOCAL_CLI_AGENT_DEFINITIONS } from "../local-cli-agent-definitions";
 import {
   aggregateCostReport,
   buildCostReport,
+  COST_REPORT_AGENT_COVERAGE,
+  COST_REPORT_PROVIDERS,
   computeCodexApiCostUSD,
   computeCodexSubscriptionCredits,
   scanCodexSession,
@@ -67,6 +70,38 @@ test("computeCodexApiCostUSD prices input, cached input, and output tokens", () 
 
 test("computeCodexSubscriptionCredits uses the Codex token-based rate card", () => {
   assert.equal(computeCodexSubscriptionCredits("gpt-5.3-codex", TOKENS), 398.125);
+});
+
+test("cost report coverage explicitly accounts for every local CLI agent", () => {
+  const configuredAgentIds = new Set(Object.keys(COST_REPORT_AGENT_COVERAGE));
+  const knownAgentIds = LOCAL_CLI_AGENT_DEFINITIONS.map((agent) => agent.id);
+
+  assert.deepEqual([...configuredAgentIds].sort(), [...knownAgentIds].sort());
+});
+
+test("supported cost report agents declare a cached or incremental reader", () => {
+  for (const [agentId, coverage] of Object.entries(COST_REPORT_AGENT_COVERAGE)) {
+    if (!coverage.supported) continue;
+
+    assert.ok(
+      coverage.cacheStrategy.length > 0,
+      `${agentId} must document the cache strategy that prevents full-history rescans`
+    );
+    assert.ok(
+      coverage.sourcePath.length > 0,
+      `${agentId} must document the historical usage source it reads`
+    );
+  }
+});
+
+test("cost report provider list matches supported agent coverage", () => {
+  const supportedProviders = new Set(
+    Object.values(COST_REPORT_AGENT_COVERAGE)
+      .filter((coverage) => coverage.supported)
+      .map((coverage) => coverage.provider)
+  );
+
+  assert.deepEqual([...supportedProviders].sort(), [...COST_REPORT_PROVIDERS].sort());
 });
 
 test("buildCostReport reuses unchanged Codex session scans", async () => {
