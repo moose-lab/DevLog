@@ -9,6 +9,13 @@ import {
   validateBranchName,
   validateWorktreeName,
 } from "@/core/worktree-validation";
+import { getWorktreeClientError } from "@/core/worktree-errors";
+
+function worktreeErrorResponse(operation: string, err: unknown) {
+  console.error(`Failed to ${operation}`, err);
+  const { error, status } = getWorktreeClientError(err);
+  return NextResponse.json({ error }, { status });
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -24,10 +31,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(enriched);
   } catch (err) {
-    return NextResponse.json(
-      { error: (err as Error).message },
-      { status: 500 }
-    );
+    return worktreeErrorResponse("list worktrees", err);
   }
 }
 
@@ -56,9 +60,6 @@ export async function POST(req: NextRequest) {
     const wt = await createWorktree(name, branch, baseBranch, projectId);
     return NextResponse.json(wt, { status: 201 });
   } catch (err) {
-    return NextResponse.json(
-      { error: (err as Error).message },
-      { status: 500 }
-    );
+    return worktreeErrorResponse("create worktree", err);
   }
 }

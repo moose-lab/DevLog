@@ -5,6 +5,13 @@ import {
   getWorktreeDiff,
   getWorktreeLog,
 } from "@/core/worktree-manager";
+import { getWorktreeClientError } from "@/core/worktree-errors";
+
+function worktreeErrorResponse(operation: string, err: unknown) {
+  console.error(`Failed to ${operation}`, err);
+  const { error, status } = getWorktreeClientError(err);
+  return NextResponse.json({ error }, { status });
+}
 
 export async function GET(
   _req: NextRequest,
@@ -25,10 +32,7 @@ export async function GET(
 
     return NextResponse.json({ ...wt, diff, log });
   } catch (err) {
-    return NextResponse.json(
-      { error: (err as Error).message },
-      { status: 500 }
-    );
+    return worktreeErrorResponse("read worktree", err);
   }
 }
 
@@ -41,9 +45,6 @@ export async function DELETE(
     await removeWorktree(name);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    return NextResponse.json(
-      { error: (err as Error).message },
-      { status: 500 }
-    );
+    return worktreeErrorResponse("remove worktree", err);
   }
 }

@@ -1,16 +1,25 @@
-import { execFile } from "child_process";
+import { execFile, type ExecFileOptions } from "child_process";
 import { promisify } from "util";
 import path from "path";
 import type { Worktree } from "./types-dashboard";
 import { getRepoRoot } from "./project-adapter";
 import { validateBranchName, validateWorktreeName } from "./worktree-validation";
+import { normalizeGitError } from "./worktree-errors";
 
 const execFileAsync = promisify(execFile);
 
+async function runGit(args: string[], options: ExecFileOptions): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("git", args, options);
+    return stdout.toString();
+  } catch (error) {
+    throw normalizeGitError(error);
+  }
+}
+
 async function git(projectId: string | undefined, ...args: string[]): Promise<string> {
   const repoRoot = getRepoRoot(projectId);
-  const { stdout } = await execFileAsync("git", args, { cwd: repoRoot });
-  return stdout;
+  return runGit(args, { cwd: repoRoot });
 }
 
 export async function listWorktrees(projectId?: string): Promise<Worktree[]> {
@@ -94,10 +103,9 @@ export async function getWorktreeDiff(name: string, projectId?: string): Promise
   const wt = worktrees.find((w) => w.name === name);
   if (!wt) throw new Error(`Worktree '${name}' not found`);
 
-  const { stdout } = await execFileAsync("git", ["diff", "--stat"], {
+  return runGit(["diff", "--stat"], {
     cwd: wt.path,
   });
-  return stdout;
 }
 
 export async function getWorktreeLog(name: string, projectId?: string): Promise<string> {
@@ -105,12 +113,7 @@ export async function getWorktreeLog(name: string, projectId?: string): Promise<
   const wt = worktrees.find((w) => w.name === name);
   if (!wt) throw new Error(`Worktree '${name}' not found`);
 
-  const { stdout } = await execFileAsync(
-    "git",
-    ["log", "--oneline", "-10"],
-    { cwd: wt.path }
-  );
-  return stdout;
+  return runGit(["log", "--oneline", "-10"], { cwd: wt.path });
 }
 
 export async function getWorktreeFilesChanged(name: string, projectId?: string): Promise<number> {
@@ -119,11 +122,7 @@ export async function getWorktreeFilesChanged(name: string, projectId?: string):
   if (!wt) return 0;
 
   try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["diff", "--name-only"],
-      { cwd: wt.path }
-    );
+    const stdout = await runGit(["diff", "--name-only"], { cwd: wt.path });
     return stdout.trim().split("\n").filter(Boolean).length;
   } catch {
     return 0;
@@ -143,15 +142,15 @@ export async function getWorktreeBranchDiff(
   if (!wt) throw new Error(`Worktree '${name}' not found`);
 
   const [statResult, diffResult] = await Promise.all([
-    execFileAsync("git", ["diff", `${baseBranch}...HEAD`, "--stat"], {
+    runGit(["diff", `${baseBranch}...HEAD`, "--stat"], {
       cwd: wt.path,
       maxBuffer: 5 * 1024 * 1024,
     }),
-    execFileAsync("git", ["diff", `${baseBranch}...HEAD`], {
+    runGit(["diff", `${baseBranch}...HEAD`], {
       cwd: wt.path,
       maxBuffer: 10 * 1024 * 1024,
     }),
   ]);
 
-  return { stat: statResult.stdout, diff: diffResult.stdout };
+  return { stat: statResult, diff: diffResult };
 }
