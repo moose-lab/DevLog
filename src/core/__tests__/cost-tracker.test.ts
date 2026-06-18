@@ -1,10 +1,12 @@
-import { mkdtemp, writeFile, rm } from "fs/promises";
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as costTracker from "../cost-tracker";
 import {
   aggregateCostReport,
+  buildCostReport,
   computeCodexApiCostUSD,
   computeCodexSubscriptionCredits,
   scanCodexSession,
@@ -31,12 +33,126 @@ async function withCodexJsonl(lines: unknown[], run: (filePath: string) => Promi
   }
 }
 
+async function withCostDirs(run: (dirs: { claudeDir: string; codexDir: string; filePath: string }) => Promise<void>) {
+  const dir = await mkdtemp(join(tmpdir(), "devlog-cost-cache-"));
+  const claudeDir = join(dir, "claude-projects");
+  const codexDir = join(dir, "codex-sessions");
+  const filePath = join(codexDir, "rollout-test.jsonl");
+
+  await mkdir(claudeDir, { recursive: true });
+  await mkdir(codexDir, { recursive: true });
+  await writeFile(
+    filePath,
+    [
+      JSON.stringify({
+        timestamp: "2026-05-16T01:00:00.000Z",
+        type: "turn_context",
+        payload: { cwd: "/Users/moose/Moose/DevLog", model: "gpt-5.1-codex" },
+      }),
+      JSON.stringify(tokenCount("2026-05-16T01:01:00.000Z", 1000, 0, 0, 0, 1000, 2, 8)),
+    ].join("\n"),
+    "utf-8"
+  );
+
+  try {
+    await run({ claudeDir, codexDir, filePath });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 test("computeCodexApiCostUSD prices input, cached input, and output tokens", () => {
   assert.equal(computeCodexApiCostUSD("gpt-5.1-codex", TOKENS), 11.375);
 });
 
 test("computeCodexSubscriptionCredits uses the Codex token-based rate card", () => {
   assert.equal(computeCodexSubscriptionCredits("gpt-5.3-codex", TOKENS), 398.125);
+});
+
+test("buildCostReport reuses unchanged Codex session scans", async () => {
+  await withCostDirs(async ({ claudeDir, codexDir }) => {
+    const tools = costTracker as typeof costTracker & {
+      clearCostTrackerCache?: () => void;
+      getCostTrackerCacheStats?: () => { hits: number; misses: number; entries: number };
+    };
+
+    assert.equal(typeof tools.clearCostTrackerCache, "function");
+    assert.equal(typeof tools.getCostTrackerCacheStats, "function");
+    tools.clearCostTrackerCache();
+
+    const first = await buildCostReport({
+      claudeProjectsDir: claudeDir,
+      codexSessionsDir: codexDir,
+      now: new Date("2026-05-16T12:00:00.000Z"),
+    });
+    assert.equal(first.totals.allTime.inputTokens, 1000);
+    assert.deepEqual(tools.getCostTrackerCacheStats(), { hits: 0, misses: 1, entries: 1 });
+
+    const second = await buildCostReport({
+      claudeProjectsDir: claudeDir,
+      codexSessionsDir: codexDir,
+      now: new Date("2026-05-16T12:00:00.000Z"),
+    });
+    assert.equal(second.totals.allTime.inputTokens, 1000);
+    assert.deepEqual(tools.getCostTrackerCacheStats(), { hits: 1, misses: 1, entries: 1 });
+  });
+});
+
+test("changed Codex session files are rescanned", async () => {
+  await withCostDirs(async ({ claudeDir, codexDir, filePath }) => {
+    const tools = costTracker as typeof costTracker & {
+      clearCostTrackerCache: () => void;
+      getCostTrackerCacheStats: () => { hits: number; misses: number; entries: number };
+    };
+    tools.clearCostTrackerCache();
+
+    await buildCostReport({
+      claudeProjectsDir: claudeDir,
+      codexSessionsDir: codexDir,
+      now: new Date("2026-05-16T12:00:00.000Z"),
+    });
+    await appendFile(
+      filePath,
+      `\n${JSON.stringify(tokenCount("2026-05-16T01:02:00.000Z", 2000, 0, 0, 0, 2000, 3, 9))}`,
+      "utf-8"
+    );
+
+    const report = await buildCostReport({
+      claudeProjectsDir: claudeDir,
+      codexSessionsDir: codexDir,
+      now: new Date("2026-05-16T12:00:00.000Z"),
+    });
+
+    assert.equal(report.totals.allTime.inputTokens, 2000);
+    assert.deepEqual(tools.getCostTrackerCacheStats(), { hits: 0, misses: 2, entries: 1 });
+  });
+});
+
+test("Codex cost cache prunes deleted session files", async () => {
+  await withCostDirs(async ({ claudeDir, codexDir, filePath }) => {
+    const tools = costTracker as typeof costTracker & {
+      clearCostTrackerCache: () => void;
+      getCostTrackerCacheStats: () => { hits: number; misses: number; entries: number };
+    };
+    tools.clearCostTrackerCache();
+
+    await buildCostReport({
+      claudeProjectsDir: claudeDir,
+      codexSessionsDir: codexDir,
+      now: new Date("2026-05-16T12:00:00.000Z"),
+    });
+    assert.deepEqual(tools.getCostTrackerCacheStats(), { hits: 0, misses: 1, entries: 1 });
+
+    await rm(filePath);
+    const report = await buildCostReport({
+      claudeProjectsDir: claudeDir,
+      codexSessionsDir: codexDir,
+      now: new Date("2026-05-16T12:00:00.000Z"),
+    });
+
+    assert.equal(report.totals.allTime.usageEvents, 0);
+    assert.deepEqual(tools.getCostTrackerCacheStats(), { hits: 0, misses: 1, entries: 0 });
+  });
 });
 
 test("scanCodexSession emits token deltas and skips duplicate total snapshots", async () => {
