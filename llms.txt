@@ -1,0 +1,53 @@
+# DevLog
+
+DevLog is a searchable AI coding-agent work journal. It reads Claude Code
+conversation history and turns raw JSONL sessions into a CLI, web dashboard,
+task board, worktree manager, reports, cost summaries, and session monitoring
+surface.
+
+## Canonical Links
+
+- GitHub repository: https://github.com/moose-lab/DevLog
+- DeepWiki project wiki: https://deepwiki.com/moose-lab/DevLog
+- Zread discovery/search entry: https://zread.ai
+- npm package: https://www.npmjs.com/package/@moose-lab/devlog
+
+## What To Read First
+
+- `README.md`: install commands, feature list, tech stack, and development flow.
+- `.devin/wiki.json`: optional DeepWiki steering when automatic wiki generation
+  misses important source areas.
+- `package.json`: repository metadata, homepage, issue URL, and public discovery
+  keywords.
+
+## Source Map
+
+- `src/cli/`: Commander.js CLI entry point and commands.
+- `src/core/`: shared parsing, discovery, database, session runtime, process,
+  task, reporting, cost, cache, and worktree logic.
+- `src/app/`: Next.js App Router pages and API routes.
+- `src/components/`: dashboard UI components.
+- `src/hooks/`: browser data-fetching hooks.
+- `docs/adr/`: architectural decisions.
+
+## Key Concepts
+
+- Session discovery: scans local coding-agent history and maps work by project.
+- Parser: turns JSONL transcript events into structured sessions and messages.
+- Dashboard database: stores sessions, tasks, reports, locks, settings, and costs.
+- Process manager: launches and monitors local coding-agent sessions.
+- Control plane: stage and gate markers let running agents expose progress and
+  ask for human input.
+- Reports: daily, weekly, and monthly human-readable summaries with HTML export.
+- Cost and usage: aggregates model/provider usage by project and calendar window.
+
+## Indexing Notes
+
+- This repository is public at `moose-lab/DevLog`.
+- DeepWiki can be opened at `https://deepwiki.com/moose-lab/DevLog`.
+- DeepWiki public indexing does not require `.devin/wiki.json`; that file is
+  optional steering, not a baseline discovery requirement.
+- Zread can be prompted from `https://zread.ai` by pasting the GitHub URL.
+- Keep the GitHub About description and topics aligned with package keywords:
+  `ai-coding-agents`, `claude-code`, `developer-tools`, `dashboard`,
+  `agent-observability`, `work-journal`.
