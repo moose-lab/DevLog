@@ -42,7 +42,7 @@ jobs:
           fetch-depth: 0
 
       - name: Claude review
-        uses: anthropics/claude-code-action@0cb4f3e5e764d2e00407d29b6bf0aa9df0976d88 # v1
+        uses: anthropics/claude-code-action@2fee15510437d71399d9139ed60433470484a8fb # v1
         with:
           # Authenticate via Claude subscription (OAuth) instead of an API
           # key, so reviews draw on the Pro/Max plan rather than API credits.
